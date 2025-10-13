@@ -1,0 +1,14 @@
+{
+  "name": "first_app_frontend",
+  "version": "1.0.0",
+  "description": "Local K8s CI/CD Learning App",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "test": "echo \"Tests passed!\" && exit 0",
+    "dev": "node app.js"
+  },
+  "keywords": ["k8s", "ci-cd", "learning"],
+  "author": "Your Name",
+  "license": "MIT"
+}

@@ -1,0 +1,44 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - develop-backend-first-app
+      - staging-backend-first-app
+      - prod-backend-first-app
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get Git Commit ID
+        id: vars
+        run: |
+          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+      - name: Set environment vars
+        run: |
+          if [ "${{ github.ref }}" == "refs/heads/develop-backend-first-app" ]; then
+            echo "ENV=development" >> $GITHUB_ENV
+            echo "SERVICE_NAME=backend-first-app" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" == "refs/heads/staging-backend-first-app" ]; then
+            echo "ENV=staging" >> $GITHUB_ENV
+            echo "SERVICE_NAME=backend-first-app" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" == "refs/heads/prod-backend-first-app" ]; then
+            echo "ENV=production" >> $GITHUB_ENV
+            echo "SERVICE_NAME=backend-first-app" >> $GITHUB_ENV
+          else
+            echo "Unknown branch"
+            exit 1
+          fi
+      - name: Show environment vars
+        run: |
+          echo "Branch: ${{ github.ref }}"
+          echo "Environment: $ENV"
+          echo "Service Name: $SERVICE_NAME"
+          echo "Git Commit ID: $sha_short"    
+
+

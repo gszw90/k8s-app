@@ -1,0 +1,9 @@
+services:
+  first-app-development:
+    image: backend-first-app:${IMAGE_TAG:-latest}
+    build:
+      context: ../
+      dockerfile: backend/deploy/Dockerfile-first-app
+    container_name: backend-first-app-development
+    ports:
+      - "18080:18080"
