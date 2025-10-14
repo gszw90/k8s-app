@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app
+  labels:
+    name: app
+    environment: shared
+    purpose: application-deployment
+---
+# 通用配置 ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: app
+data:
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+---
+# Traefik 中间件配置
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: headers-develop
+  namespace: app
+spec:
+  headers:
+    customRequestHeaders:
+      X-Environment: "develop"
+      X-Forwarded-Proto: "https"
+    accessControlAllowOrigins:
+      - "*"
+    accessControlAllowMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+    accessControlAllowHeaders:
+      - "*"
+    accessControlMaxAge: 100
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: headers-staging
+  namespace: app
+spec:
+  headers:
+    customRequestHeaders:
+      X-Environment: "staging"
+      X-Forwarded-Proto: "https"
+    accessControlAllowOrigins:
+      - "*"
+    accessControlAllowMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+    accessControlAllowHeaders:
+      - "*"
+    accessControlMaxAge: 100
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: headers-prod
+  namespace: app
+spec:
+  headers:
+    customRequestHeaders:
+      X-Environment: "production"
+      X-Forwarded-Proto: "https"
+    accessControlAllowOrigins:
+      - "https://yourdomain.com"
+    accessControlAllowMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+    accessControlAllowHeaders:
+      - "*"
+    accessControlMaxAge: 100

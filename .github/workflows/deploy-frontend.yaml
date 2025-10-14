@@ -1,0 +1,194 @@
+name: Deploy Frontend to Local K8s
+
+on:
+  push:
+    branches:
+      - frontend-web-develop
+      - frontend-web-staging
+      - frontend-web-prod
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'develop'
+        type: choice
+        options:
+        - develop
+        - staging
+        - prod
+
+env:
+  NAMESPACE: app
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    outputs:
+      deployment-name: ${{ steps.parse.outputs.deployment-name }}
+      image-name: ${{ steps.parse.outputs.image-name }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Parse branch info and set environment variables
+        id: parse
+        run: |
+          set -e
+
+          # 获取分支名
+          BRANCH="${{ github.ref_name }}"
+          echo "Branch: $BRANCH"
+
+          # 自动解析分支名
+          if [[ "$BRANCH" =~ ^frontend-(.+)-(.+)$ ]]; then
+            PROJECT_NAME="${BASH_REMATCH[1]}"
+            ENVIRONMENT="${BASH_REMATCH[2]}"
+          else
+            # 手动触发时使用输入参数
+            PROJECT_NAME="web"
+            ENVIRONMENT="${{ github.event.inputs.environment || 'develop' }}"
+          fi
+
+          echo "Project: $PROJECT_NAME"
+          echo "Environment: $ENVIRONMENT"
+
+          # 设置变量
+          DEPLOYMENT_NAME="app-$PROJECT_NAME-$ENVIRONMENT"
+          IMAGE_NAME="web-app"
+
+          # 输出变量
+          echo "deployment-name=$DEPLOYMENT_NAME" >> $GITHUB_OUTPUT
+          echo "image-name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+
+          # 设置环境变量
+          echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_ENV
+          echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
+          echo "DEPLOYMENT_NAME=$DEPLOYMENT_NAME" >> $GITHUB_ENV
+          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+
+      - name: Get Git commit info
+        run: |
+          COMMIT_SHA=$(git rev-parse --short HEAD)
+          COMMIT_MESSAGE=$(git log -1 --pretty=%s)
+          echo "COMMIT_SHA=$COMMIT_SHA" >> $GITHUB_ENV
+          echo "COMMIT_MESSAGE=$COMMIT_MESSAGE" >> $GITHUB_ENV
+          echo "Git Commit: $COMMIT_SHA"
+
+      - name: Show deployment configuration
+        run: |
+          echo "🚀 Frontend Deployment Configuration:"
+          echo "  Project: ${{ steps.parse.outputs.deployment-name }}"
+          echo "  Environment: ${{ steps.parse.outputs.environment }}"
+          echo "  Image Name: ${{ steps.parse.outputs.image-name }}"
+          echo "  Commit: $COMMIT_SHA"
+
+      - name: Verify kubectl connection
+        run: |
+          if ! kubectl cluster-info &> /dev/null; then
+            echo "❌ Cannot connect to Kubernetes cluster"
+            exit 1
+          fi
+          echo "✅ Kubernetes cluster connection verified"
+
+      - name: Create namespace if not exists
+        run: |
+          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Apply base configurations
+        run: |
+          echo "⚙️ Applying base configurations..."
+          kubectl apply -f backend/deploy/k8s/namespace.yaml
+
+      - name: Build Docker image
+        run: |
+          echo "🐳 Building Docker image: ${{ steps.parse.outputs.image-name }}:$COMMIT_SHA"
+
+          # 构建前端镜像
+          cd frontend/first_app
+          docker build -t web-app:$COMMIT_SHA .
+          docker tag web-app:$COMMIT_SHA web-app:latest
+
+          echo "✅ Docker image built successfully"
+
+      - name: Update deployment with new image
+        run: |
+          echo "🔄 Updating deployment with new image..."
+
+          # 更新部署文件
+          DEPLOYMENT_FILE="frontend/first_app/deploy/k8s/web-deployment.yaml"
+
+          # 备份原文件
+          cp $DEPLOYMENT_FILE $DEPLOYMENT_FILE.bak
+
+          # 更新镜像标签
+          sed -i "s|image: .*:latest|image: ${{ steps.parse.outputs.image-name }}:$COMMIT_SHA|g" $DEPLOYMENT_FILE
+
+          # 更新环境变量
+          sed -i "s|value: \"1.0.0-develop\"|value: \"1.0.0-$ENVIRONMENT\"|g" $DEPLOYMENT_FILE
+
+          # 应用部署
+          kubectl apply -f $DEPLOYMENT_FILE
+
+          echo "✅ Deployment applied successfully"
+
+      - name: Wait for deployment to be ready
+        run: |
+          echo "⏳ Waiting for deployment to be ready..."
+          kubectl wait --for=condition=available --timeout=60s deployment/${{ steps.parse.outputs.deployment-name }} -n ${{ env.NAMESPACE }} || {
+            echo "❌ Deployment failed to become ready"
+            echo "Pod status:"
+            kubectl get pods -n ${{ env.NAMESPACE }} -l app=web,environment=$ENVIRONMENT
+            echo "Deployment description:"
+            kubectl describe deployment/${{ steps.parse.outputs.deployment-name }} -n ${{ env.NAMESPACE }}
+            exit 1
+          }
+
+      - name: Verify deployment and test endpoints
+        run: |
+          echo "✅ Deployment completed successfully!"
+          echo ""
+          echo "📊 Current Status:"
+          kubectl get pods -n ${{ env.NAMESPACE }} -l app=web,environment=$ENVIRONMENT
+
+          echo ""
+          echo "🌐 Service URL:"
+          echo "  - http://web-$ENVIRONMENT.localhost"
+
+          echo ""
+          echo "🧪 Testing endpoints..."
+
+          # 等待服务完全启动
+          sleep 5
+
+          # 测试根端点
+          echo "Testing root endpoint..."
+          kubectl run test-web-root --image=curlimages/curl --rm -i --restart=Never -n ${{ env.NAMESPACE }} -- \
+            curl -f http://app-${{ steps.parse.outputs.deployment-name }}.${{ env.NAMESPACE }}.svc.cluster.local:3000/ || echo "⚠️ Root endpoint test failed"
+
+          # 测试健康检查端点
+          echo "Testing /health endpoint..."
+          kubectl run test-web-health --image=curlimages/curl --rm -i --restart=Never -n ${{ env.NAMESPACE }} -- \
+            curl -f http://app-${{ steps.parse.outputs.deployment-name }}.${{ env.NAMESPACE }}.svc.cluster.local:3000/health || echo "⚠️ Health check test failed"
+
+          echo ""
+          echo "🔍 Check logs with:"
+          echo "  kubectl logs -n ${{ env.NAMESPACE }} deployment/${{ steps.parse.outputs.deployment-name }} -f"
+
+      - name: Cleanup old Docker images
+        if: always()
+        run: |
+          echo "🧹 Cleaning up old Docker images..."
+          # 保留最新的5个镜像，删除其他的
+          docker images web-app --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}" | tail -n +6 | awk '{print $2}' | xargs -r docker rmi || true
+          echo "✅ Cleanup completed"
+
+      - name: Restore deployment file
+        if: always()
+        run: |
+          # 恢复原始部署文件
+          if [ -f "frontend/first_app/deploy/k8s/web-deployment.yaml.bak" ]; then
+            mv frontend/first_app/deploy/k8s/web-deployment.yaml.bak frontend/first_app/deploy/k8s/web-deployment.yaml
+            echo "✅ Deployment file restored"
+          fi

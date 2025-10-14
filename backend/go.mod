@@ -1,4 +1,4 @@
-module first_app
+module backend
 
 go 1.24.0
 
