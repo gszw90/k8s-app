@@ -50,14 +50,14 @@ jobs:
           cat /tmp/branch-output.txt
 
           # 提取关键信息
-          DOMAIN=$(grep "域:" /tmp/branch-output.txt | cut -d' ' -f2)
-          APP_NAME=$(grep "应用名:" /tmp/branch-output.txt | cut -d' ' -f2)
-          ENVIRONMENT=$(grep "环境:" /tmp/branch-output.txt | cut -d' ' -f2)
-          APP_DIR=$(grep "应用目录:" /tmp/branch-output.txt | cut -d' ' -f2)
-          DOCKERFILE=$(grep "Dockerfile:" /tmp/branch-output.txt | cut -d' ' -f2)
-          SERVICE_NAME=$(grep "服务名:" /tmp/branch-output.txt | cut -d' ' -f2)
-          PORT=$(grep "端口:" /tmp/branch-output.txt | cut -d' ' -f2)
-          COMMIT_SHORT=$(grep "Commit:" /tmp/branch-output.txt | cut -d' ' -f2)
+          DOMAIN=$(grep "域:" /tmp/branch-output.txt | awk '{print $2}')
+          APP_NAME=$(grep "应用名:" /tmp/branch-output.txt | awk '{print $2}')
+          ENVIRONMENT=$(grep "环境:" /tmp/branch-output.txt | awk '{print $2}')
+          APP_DIR=$(grep "应用目录:" /tmp/branch-output.txt | awk '{print $2}')
+          DOCKERFILE=$(grep "Dockerfile:" /tmp/branch-output.txt | awk '{print $2}')
+          SERVICE_NAME=$(grep "服务名:" /tmp/branch-output.txt | awk '{print $2}')
+          PORT=$(grep "端口:" /tmp/branch-output.txt | awk '{print $2}')
+          COMMIT_SHORT=$(grep "Commit:" /tmp/branch-output.txt | awk '{print $2}')
 
           echo "domain=$DOMAIN" >> $GITHUB_OUTPUT
           echo "app-name=$APP_NAME" >> $GITHUB_OUTPUT
