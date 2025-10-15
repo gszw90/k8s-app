@@ -18,7 +18,7 @@ func startServer() {
 	r := gin.Default()
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{
-			"message": "pong",
+			"message": "pong !",
 		})
 	})
 	r.GET("/hello", func(c *gin.Context) {
