@@ -418,7 +418,8 @@ jobs:
 
           # 等待部署完成
           echo "⏳ 等待部署完成..."
-          DEPLOYMENT_NAME="app-${SERVICE_NAME}-${ENVIRONMENT}"
+          DEPLOYMENT_NAME="app-${APP_NAME}-${ENVIRONMENT}"
+          echo "🎯 期望的部署名称: $DEPLOYMENT_NAME"
           kubectl rollout status deployment/"$DEPLOYMENT_NAME" --namespace="$NAMESPACE" --timeout=120s
 
           # 恢复备份文件
