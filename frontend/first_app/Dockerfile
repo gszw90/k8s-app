@@ -5,7 +5,7 @@ FROM node:18-alpine
 WORKDIR /app
 
 # 复制 package.json 和 package-lock.json（如果存在）
-COPY package*.json ./
+COPY frontend/first_app/package*.json ./
 
 # 安装依赖
 RUN npm install --production
@@ -15,7 +15,7 @@ RUN addgroup -g 1001 -S appgroup && \
     adduser -u 1001 -S appuser -G appgroup
 
 # 复制应用源代码
-COPY . .
+COPY frontend/first_app/ .
 
 # 如果应用文件在src目录中，复制到工作目录
 RUN if [ -d "src" ]; then cp src/* . ; fi

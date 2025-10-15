@@ -1,0 +1,114 @@
+# 预发布环境 Docker Compose 配置
+version: '3.8'
+
+services:
+  first-app:
+    build:
+      context: .
+      dockerfile: docker/first-app/Dockerfile.staging
+    ports:
+      - "18080:18080"
+    environment:
+      - GIN_MODE=release
+      - LOG_LEVEL=info
+      - NODE_ENV=staging
+    networks:
+      - staging-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:18080/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.2'
+        reservations:
+          memory: 64M
+          cpus: '0.05'
+
+  second-app:
+    build:
+      context: .
+      dockerfile: docker/second-app/Dockerfile.staging
+    ports:
+      - "18081:18081"
+    environment:
+      - GIN_MODE=release
+      - LOG_LEVEL=info
+      - NODE_ENV=staging
+    networks:
+      - staging-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:18081/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.2'
+        reservations:
+          memory: 64M
+          cpus: '0.05'
+
+  web-app:
+    build:
+      context: .
+      dockerfile: docker/web-app/Dockerfile.staging
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=staging
+      - LOG_LEVEL=info
+      - PORT=3000
+    networks:
+      - staging-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.2'
+        reservations:
+          memory: 64M
+          cpus: '0.05'
+
+  # Nginx 反向代理
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx-staging.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - staging-network
+    restart: unless-stopped
+    depends_on:
+      - first-app
+      - second-app
+      - web-app
+
+networks:
+  staging-network:
+    driver: bridge
+
+volumes:
+  first-app-data:
+  second-app-data:
+  web-app-data:

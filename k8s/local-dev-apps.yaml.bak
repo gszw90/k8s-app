@@ -1,0 +1,344 @@
+# 本地开发环境统一配置 - 适配您的环境
+---
+# ConfigMap - first-app 开发环境
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-first-app-develop-config
+  namespace: app
+  labels:
+    app: first-app
+    environment: develop
+data:
+  LOG_LEVEL: "debug"
+  GIN_MODE: "debug"
+  NODE_ENV: "development"
+  PORT: "18080"
+---
+# ConfigMap - second-app 开发环境
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-second-app-develop-config
+  namespace: app
+  labels:
+    app: second-app
+    environment: develop
+data:
+  LOG_LEVEL: "debug"
+  GIN_MODE: "debug"
+  NODE_ENV: "development"
+  PORT: "18081"
+---
+# ConfigMap - web-app 开发环境
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-web-app-develop-config
+  namespace: app
+  labels:
+    app: web-app
+    environment: develop
+data:
+  LOG_LEVEL: "debug"
+  NODE_ENV: "development"
+  PORT: "3000"
+  VERSION: "1.0.0-develop"
+---
+# Deployment - first-app
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-first-app-develop
+  namespace: app
+  labels:
+    app: first-app
+    environment: develop
+    version: develop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: first-app
+      environment: develop
+  template:
+    metadata:
+      labels:
+        app: first-app
+        environment: develop
+        version: develop
+    spec:
+      containers:
+      - name: first-app
+        image: first-app:8575e4a
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 18080
+          name: http
+        envFrom:
+        - configMapRef:
+            name: app-first-app-develop-config
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 18080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: 18080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+# Deployment - second-app
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-second-app-develop
+  namespace: app
+  labels:
+    app: second-app
+    environment: develop
+    version: develop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: second-app
+      environment: develop
+  template:
+    metadata:
+      labels:
+        app: second-app
+        environment: develop
+        version: develop
+    spec:
+      containers:
+      - name: second-app
+        image: second-app:8575e4a
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 18081
+          name: http
+        envFrom:
+        - configMapRef:
+            name: app-second-app-develop-config
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 18081
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: 18081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+# Deployment - web-app
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-web-app-develop
+  namespace: app
+  labels:
+    app: web-app
+    environment: develop
+    version: develop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-app
+      environment: develop
+  template:
+    metadata:
+      labels:
+        app: web-app
+        environment: develop
+        version: develop
+    spec:
+      containers:
+      - name: web-app
+        image: web-app:PLACEHOLDER
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3000
+          name: http
+        envFrom:
+        - configMapRef:
+            name: app-web-app-develop-config
+        env:
+        - name: PORT
+          value: "3000"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+# Service - first-app
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-first-app-develop
+  namespace: app
+  labels:
+    app: first-app
+    environment: develop
+spec:
+  selector:
+    app: first-app
+    environment: develop
+  ports:
+  - name: http
+    port: 18080
+    targetPort: 18080
+    protocol: TCP
+  type: ClusterIP
+---
+# Service - second-app
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-second-app-develop
+  namespace: app
+  labels:
+    app: second-app
+    environment: develop
+spec:
+  selector:
+    app: second-app
+    environment: develop
+  ports:
+  - name: http
+    port: 18081
+    targetPort: 18081
+    protocol: TCP
+  type: ClusterIP
+---
+# Service - web-app
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-web-app-develop
+  namespace: app
+  labels:
+    app: web-app
+    environment: develop
+spec:
+  selector:
+    app: web-app
+    environment: develop
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+    protocol: TCP
+  type: ClusterIP
+---
+# IngressRoute - first-app (Traefik v2)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: app-first-app-develop
+  namespace: app
+spec:
+  entryPoints:
+    - web
+  routes:
+  - match: PathPrefix(`/first-app`)
+    kind: Rule
+    services:
+    - name: app-first-app-develop
+      port: 18080
+    middlewares:
+    - name: app-first-app-stripprefix
+---
+# IngressRoute - second-app (Traefik v2)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: app-second-app-develop
+  namespace: app
+spec:
+  entryPoints:
+    - web
+  routes:
+  - match: PathPrefix(`/second-app`)
+    kind: Rule
+    services:
+    - name: app-second-app-develop
+      port: 18081
+    middlewares:
+    - name: app-second-app-stripprefix
+---
+# IngressRoute - web-app (Traefik v2)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: app-web-app-develop
+  namespace: app
+spec:
+  entryPoints:
+    - web
+  routes:
+  - match: PathPrefix(`/`)
+    kind: Rule
+    services:
+    - name: app-web-app-develop
+      port: 3000
+---
+# Middleware - StripPrefix for first-app
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: app-first-app-stripprefix
+  namespace: app
+spec:
+  stripPrefix:
+    prefixes:
+      - /first-app
+    forceSlash: false
+---
+# Middleware - StripPrefix for second-app
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: app-second-app-stripprefix
+  namespace: app
+spec:
+  stripPrefix:
+    prefixes:
+      - /second-app
+    forceSlash: false

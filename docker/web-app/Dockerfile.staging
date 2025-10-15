@@ -1,0 +1,50 @@
+# Web App - Staging Environment
+FROM node:18-alpine AS builder
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制 package.json 和 package-lock.json
+COPY frontend/first_app/package*.json ./
+
+# 安装依赖
+RUN npm ci
+
+# 复制应用源代码
+COPY frontend/first_app/ .
+
+# 如果应用文件在src目录中，复制到工作目录
+RUN if [ -d "src" ]; then cp src/* . ; fi
+
+# 运行阶段
+FROM node:18-alpine
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制 package.json 和已安装的依赖
+COPY frontend/first_app/package*.json ./
+RUN npm ci --production
+
+# 从构建阶段复制应用代码
+COPY --from=builder /app .
+
+# 创建非 root 用户
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S appuser -G appgroup
+
+# 更改文件所有者
+RUN chown -R appuser:appgroup /app
+
+# 切换到非 root 用户
+USER appuser
+
+# 暴露端口
+EXPOSE 3000
+
+# 设置预发布环境变量
+ENV NODE_ENV=staging
+ENV LOG_LEVEL=info
+
+# 运行应用
+CMD ["npm", "start"]

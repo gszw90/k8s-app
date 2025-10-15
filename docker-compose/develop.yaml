@@ -1,0 +1,92 @@
+# 开发环境 Docker Compose 配置
+version: '3.8'
+
+services:
+  first-app:
+    build:
+      context: .
+      dockerfile: docker/first-app/Dockerfile.develop
+    ports:
+      - "18080:18080"
+    environment:
+      - GIN_MODE=debug
+      - LOG_LEVEL=debug
+      - NODE_ENV=development
+    volumes:
+      - ./backend/app/first_app:/app
+    networks:
+      - develop-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18080/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  second-app:
+    build:
+      context: .
+      dockerfile: docker/second-app/Dockerfile.develop
+    ports:
+      - "18081:18081"
+    environment:
+      - GIN_MODE=debug
+      - LOG_LEVEL=debug
+      - NODE_ENV=development
+    volumes:
+      - ./backend/app/second_app:/app
+    networks:
+      - develop-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18081/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  web-app:
+    build:
+      context: .
+      dockerfile: docker/web-app/Dockerfile.develop
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - LOG_LEVEL=debug
+      - PORT=3000
+    volumes:
+      - ./frontend/first_app:/app
+    networks:
+      - develop-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # 可选的数据库服务
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - develop-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  develop-network:
+    driver: bridge
+
+volumes:
+  first-app-data:
+  second-app-data:
+  web-app-data:

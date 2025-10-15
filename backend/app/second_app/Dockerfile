@@ -5,13 +5,13 @@ FROM golang:1.24-alpine AS builder
 WORKDIR /app
 
 # 复制 go mod 文件
-COPY ../../go.mod ../../go.sum ./
+COPY backend/go.mod backend/go.sum ./
 
 # 下载依赖
 RUN go mod download
 
 # 复制源代码
-COPY app/second_app/ .
+COPY backend/app/second_app/ .
 
 # 构建应用
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .

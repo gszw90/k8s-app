@@ -1,0 +1,276 @@
+# Monorepo 分支自动化部署 Workflow
+# 支持分支命名: {domain}-{app}-{environment}
+# 示例: backend-first-app-develop, frontend-web-app-staging
+
+name: Deploy Monorepo by Branch Name
+
+on:
+  push:
+    branches:
+      - 'backend-*-*'
+      - 'frontend-*-*'
+  pull_request:
+    branches:
+      - 'backend-*-*'
+      - 'frontend-*-*'
+  workflow_dispatch:
+
+env:
+  REGISTRY: local
+  NAMESPACE: app
+
+jobs:
+  # 解析分支信息
+  parse-branch:
+    runs-on: self-hosted
+    outputs:
+      domain: ${{ steps.parse.outputs.domain }}
+      app-name: ${{ steps.parse.outputs.app-name }}
+      environment: ${{ steps.parse.outputs.environment }}
+      app-dir: ${{ steps.parse.outputs.app-dir }}
+      dockerfile: ${{ steps.parse.outputs.dockerfile }}
+      service-name: ${{ steps.parse.outputs.service-name }}
+      port: ${{ steps.parse.outputs.port }}
+      commit-short: ${{ steps.parse.outputs.commit-short }}
+      should-deploy: ${{ steps.check.outputs.should-deploy }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 解析分支信息
+        id: parse
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          echo "🔍 解析分支: $BRANCH"
+
+          # 执行分支解析脚本
+          ./scripts/parse-branch.sh "$BRANCH" > /tmp/branch-output.txt 2>&1
+
+          # 捕获输出
+          cat /tmp/branch-output.txt
+
+          # 提取关键信息
+          DOMAIN=$(grep "域:" /tmp/branch-output.txt | cut -d' ' -f2)
+          APP_NAME=$(grep "应用名:" /tmp/branch-output.txt | cut -d' ' -f2)
+          ENVIRONMENT=$(grep "环境:" /tmp/branch-output.txt | cut -d' ' -f2)
+          APP_DIR=$(grep "应用目录:" /tmp/branch-output.txt | cut -d' ' -f2)
+          DOCKERFILE=$(grep "Dockerfile:" /tmp/branch-output.txt | cut -d' ' -f2)
+          SERVICE_NAME=$(grep "服务名:" /tmp/branch-output.txt | cut -d' ' -f2)
+          PORT=$(grep "端口:" /tmp/branch-output.txt | cut -d' ' -f2)
+          COMMIT_SHORT=$(grep "Commit:" /tmp/branch-output.txt | cut -d' ' -f2)
+
+          echo "domain=$DOMAIN" >> $GITHUB_OUTPUT
+          echo "app-name=$APP_NAME" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "app-dir=$APP_DIR" >> $GITHUB_OUTPUT
+          echo "dockerfile=$DOCKERFILE" >> $GITHUB_OUTPUT
+          echo "service-name=$SERVICE_NAME" >> $GITHUB_OUTPUT
+          echo "port=$PORT" >> $GITHUB_OUTPUT
+          echo "commit-short=$COMMIT_SHORT" >> $GITHUB_OUTPUT
+
+      - name: 检查文件变更
+        id: check
+        run: |
+          APP_DIR="${{ steps.parse.outputs.app-dir }}"
+          if [ -n "$APP_DIR" ] && [ -d "$APP_DIR" ]; then
+            echo "✅ 找到应用目录: $APP_DIR"
+            echo "should-deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ 应用目录不存在: $APP_DIR"
+            echo "should-deploy=false" >> $GITHUB_OUTPUT
+          fi
+
+  # 构建 Docker 镜像
+  build:
+    needs: parse-branch
+    if: needs.parse-branch.outputs.should-deploy == 'true'
+    runs-on: self-hosted
+    outputs:
+      image-tag: ${{ steps.build.outputs.image-tag }}
+      build-success: ${{ steps.build.outputs.build-success }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 构建 Docker 镜像
+        id: build
+        run: |
+          APP_NAME="${{ needs.parse-branch.outputs.app-name }}"
+          ENVIRONMENT="${{ needs.parse-branch.outputs.environment }}"
+          DOCKERFILE="${{ needs.parse-branch.outputs.dockerfile }}"
+          COMMIT_SHORT="${{ needs.parse-branch.outputs.commit-short }}"
+
+          echo "🐳 构建镜像: $APP_NAME"
+          echo "Dockerfile: $DOCKERFILE"
+          echo "标签: $COMMIT_SHORT"
+
+          # 检查 Dockerfile 是否存在
+          if [ ! -f "$DOCKERFILE" ]; then
+            echo "❌ Dockerfile 不存在: $DOCKERFILE"
+            echo "build-success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # 构建镜像
+          IMAGE_TAG="${APP_NAME}:${COMMIT_SHORT}"
+          ENV_TAG="${APP_NAME}:${ENVIRONMENT}-latest"
+
+          echo "🔨 开始构建: $IMAGE_TAG"
+          docker build -f "$DOCKERFILE" -t "$IMAGE_TAG" .
+
+          # 创建环境标签
+          docker tag "$IMAGE_TAG" "$ENV_TAG"
+
+          echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "build-success=true" >> $GITHUB_OUTPUT
+
+          echo "✅ 镜像构建完成"
+          docker images | grep "$APP_NAME"
+
+  # 部署到 Kubernetes
+  deploy:
+    needs: [parse-branch, build]
+    if: |
+      needs.parse-branch.outputs.should-deploy == 'true' &&
+      needs.build.outputs.build-success == 'true' &&
+      github.event_name == 'push'
+    runs-on: self-hosted
+    outputs:
+      deployment-success: ${{ steps.deploy.outputs.deployment-success }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 部署到 Kubernetes
+        id: deploy
+        run: |
+          APP_NAME="${{ needs.parse-branch.outputs.app-name }}"
+          ENVIRONMENT="${{ needs.parse-branch.outputs.environment }}"
+          SERVICE_NAME="${{ needs.parse-branch.outputs.service-name }}"
+          COMMIT_SHORT="${{ needs.parse-branch.outputs.commit-short }}"
+          IMAGE_TAG="${{ needs.build.outputs.image-tag }}"
+          NAMESPACE="${{ env.NAMESPACE }}"
+
+          echo "🚀 部署应用: $APP_NAME"
+          echo "环境: $ENVIRONMENT"
+          echo "命名空间: $NAMESPACE"
+          echo "镜像: $IMAGE_TAG"
+
+          # 验证 K8s 集群连接
+          if ! kubectl cluster-info &> /dev/null; then
+            echo "❌ 无法连接到 Kubernetes 集群"
+            echo "deployment-success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # 确保 namespace 存在
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+          # 更新 K8s 配置文件中的镜像标签
+          K8S_CONFIG="k8s/local-dev-apps.yaml"
+          if [ -f "$K8S_CONFIG" ]; then
+            echo "📝 更新 K8s 配置文件"
+            sed -i.bak "s|image: .*:develop|image: $IMAGE_TAG|g" "$K8S_CONFIG"
+            sed -i.bak "s|image: .*:staging|image: $IMAGE_TAG|g" "$K8S_CONFIG"
+            sed -i.bak "s|image: .*:prod|image: $IMAGE_TAG|g" "$K8S_CONFIG"
+          else
+            echo "❌ K8s 配置文件不存在: $K8S_CONFIG"
+            echo "deployment-success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # 部署应用
+          echo "☸️ 部署到 Kubernetes..."
+          kubectl apply -f "$K8S_CONFIG"
+
+          # 等待部署完成
+          echo "⏳ 等待部署完成..."
+          DEPLOYMENT_NAME="app-${SERVICE_NAME}-${ENVIRONMENT}"
+          kubectl rollout status deployment/"$DEPLOYMENT_NAME" --namespace="$NAMESPACE" --timeout=120s
+
+          # 恢复备份文件
+          if [ -f "$K8S_CONFIG.bak" ]; then
+            mv "$K8S_CONFIG.bak" "$K8S_CONFIG"
+          fi
+
+          echo "deployment-success=true" >> $GITHUB_OUTPUT
+          echo "✅ 部署完成"
+
+  # 验证部署
+  verify:
+    needs: [parse-branch, deploy]
+    if: |
+      needs.parse-branch.outputs.should-deploy == 'true' &&
+      needs.deploy.outputs.deployment-success == 'true'
+    runs-on: self-hosted
+    steps:
+      - name: 验证部署状态
+        run: |
+          SERVICE_NAME="${{ needs.parse-branch.outputs.service-name }}"
+          ENVIRONMENT="${{ needs.parse-branch.outputs.environment }}"
+          PORT="${{ needs.parse-branch.outputs.port }}"
+          NAMESPACE="${{ env.NAMESPACE }}"
+
+          echo "📊 验证部署状态..."
+
+          # 检查 Pod 状态
+          echo "Pod 状态:"
+          kubectl get pods --namespace="$NAMESPACE" -l app="$SERVICE_NAME" -l environment="$ENVIRONMENT"
+
+          # 检查服务状态
+          echo "服务状态:"
+          kubectl get services --namespace="$NAMESPACE" -l app="$SERVICE_NAME" -l environment="$ENVIRONMENT"
+
+          # 等待服务启动
+          echo "⏳ 等待服务启动..."
+          sleep 10
+
+          # 健康检查
+          echo "🧪 执行健康检查..."
+
+          # 根据应用类型进行不同的健康检查
+          if [[ "$SERVICE_NAME" == *"app" ]]; then
+            # 后端应用检查
+            HEALTH_PATH="/${SERVICE_NAME%%-app}/ping"
+            curl -f "http://localhost$HEALTH_PATH" || echo "⚠️ 健康检查失败，但部署可能仍在进行中"
+          else
+            # 前端应用检查
+            curl -f "http://localhost/health" || echo "⚠️ 健康检查失败，但部署可能仍在进行中"
+          fi
+
+          echo "✅ 验证完成"
+
+  # 通知结果
+  notify:
+    needs: [parse-branch, build, deploy, verify]
+    if: always()
+    runs-on: self-hosted
+    steps:
+      - name: 部署结果通知
+        run: |
+          DOMAIN="${{ needs.parse-branch.outputs.domain }}"
+          APP_NAME="${{ needs.parse-branch.outputs.app-name }}"
+          ENVIRONMENT="${{ needs.parse-branch.outputs.environment }}"
+          BRANCH="${{ github.ref_name }}"
+          COMMIT="${{ github.sha }}"
+
+          echo "📋 部署结果:"
+          echo "  分支: $BRANCH"
+          echo "  域: $DOMAIN"
+          echo "  应用: $APP_NAME"
+          echo "  环境: $ENVIRONMENT"
+          echo "  Commit: $COMMIT"
+          echo ""
+
+          if [[ "${{ needs.deploy.result }}" == "success" ]]; then
+            echo "🎉 部署成功!"
+            echo "🌐 访问地址: http://localhost/${APP_NAME%%-app}/"
+          elif [[ "${{ needs.build.result }}" == "failure" ]]; then
+            echo "❌ 构建失败!"
+          elif [[ "${{ needs.deploy.result }}" == "failure" ]]; then
+            echo "❌ 部署失败!"
+          elif [[ "${{ needs.parse-branch.outputs.should-deploy }}" == "false" ]]; then
+            echo "ℹ️ 跳过部署 - 应用目录不存在或无变更。"
+          else
+            echo "⚠️ 未知状态"
+          fi

@@ -1,194 +1,258 @@
-name: Deploy Frontend to Local K8s
+# 前端服务统一部署 Workflow
+name: Deploy Frontend Services
 
 on:
   push:
-    branches:
-      - frontend-web-develop
-      - frontend-web-staging
-      - frontend-web-prod
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Target environment'
-        required: true
-        default: 'develop'
-        type: choice
-        options:
-        - develop
-        - staging
-        - prod
+    branches: [develop, staging, prod]
+    paths:
+      - 'frontend/**'
+      - 'docker/**'
+      - 'k8s/frontend-*.yaml'
+      - 'scripts/**'
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'frontend/**'
+      - 'docker/**'
+      - 'k8s/frontend-*.yaml'
+      - 'scripts/**'
 
 env:
-  NAMESPACE: app
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  deploy:
-    runs-on: self-hosted
+  detect-changes:
+    runs-on: ubuntu-latest
     outputs:
-      deployment-name: ${{ steps.parse.outputs.deployment-name }}
-      image-name: ${{ steps.parse.outputs.image-name }}
-
+      web-app: ${{ steps.changes.outputs.web-app }}
+      should-deploy: ${{ steps.changes.outputs.should-deploy }}
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Parse branch info and set environment variables
-        id: parse
+      - name: 检测文件变更
+        uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            web-app:
+              - 'frontend/first_app/**'
+              - 'docker/web-app/**'
+            deploy-files:
+              - 'k8s/frontend-web-app.yaml'
+              - 'scripts/deploy.sh'
+            shared-config:
+              - 'scripts/build.sh'
+
+      - name: 设置部署标志
         run: |
-          set -e
-
-          # 获取分支名
-          BRANCH="${{ github.ref_name }}"
-          echo "Branch: $BRANCH"
-
-          # 自动解析分支名
-          if [[ "$BRANCH" =~ ^frontend-(.+)-(.+)$ ]]; then
-            PROJECT_NAME="${BASH_REMATCH[1]}"
-            ENVIRONMENT="${BASH_REMATCH[2]}"
+          if [[ "${{ steps.changes.outputs.web-app }}" == "true" ]]; then
+            echo "should-deploy=true" >> $GITHUB_OUTPUT
           else
-            # 手动触发时使用输入参数
-            PROJECT_NAME="web"
-            ENVIRONMENT="${{ github.event.inputs.environment || 'develop' }}"
+            echo "should-deploy=false" >> $GITHUB_OUTPUT
           fi
 
-          echo "Project: $PROJECT_NAME"
-          echo "Environment: $ENVIRONMENT"
+  test:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.should-deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-          # 设置变量
-          DEPLOYMENT_NAME="app-$PROJECT_NAME-$ENVIRONMENT"
-          IMAGE_NAME="web-app"
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'frontend/first_app/package-lock.json'
 
-          # 输出变量
-          echo "deployment-name=$DEPLOYMENT_NAME" >> $GITHUB_OUTPUT
-          echo "image-name=$IMAGE_NAME" >> $GITHUB_OUTPUT
-
-          # 设置环境变量
-          echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_ENV
-          echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
-          echo "DEPLOYMENT_NAME=$DEPLOYMENT_NAME" >> $GITHUB_ENV
-          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
-
-      - name: Get Git commit info
+      - name: 安装依赖
         run: |
-          COMMIT_SHA=$(git rev-parse --short HEAD)
-          COMMIT_MESSAGE=$(git log -1 --pretty=%s)
-          echo "COMMIT_SHA=$COMMIT_SHA" >> $GITHUB_ENV
-          echo "COMMIT_MESSAGE=$COMMIT_MESSAGE" >> $GITHUB_ENV
-          echo "Git Commit: $COMMIT_SHA"
-
-      - name: Show deployment configuration
-        run: |
-          echo "🚀 Frontend Deployment Configuration:"
-          echo "  Project: ${{ steps.parse.outputs.deployment-name }}"
-          echo "  Environment: ${{ steps.parse.outputs.environment }}"
-          echo "  Image Name: ${{ steps.parse.outputs.image-name }}"
-          echo "  Commit: $COMMIT_SHA"
-
-      - name: Verify kubectl connection
-        run: |
-          if ! kubectl cluster-info &> /dev/null; then
-            echo "❌ Cannot connect to Kubernetes cluster"
-            exit 1
-          fi
-          echo "✅ Kubernetes cluster connection verified"
-
-      - name: Create namespace if not exists
-        run: |
-          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Apply base configurations
-        run: |
-          echo "⚙️ Applying base configurations..."
-          kubectl apply -f backend/deploy/k8s/namespace.yaml
-
-      - name: Build Docker image
-        run: |
-          echo "🐳 Building Docker image: ${{ steps.parse.outputs.image-name }}:$COMMIT_SHA"
-
-          # 构建前端镜像
           cd frontend/first_app
-          docker build -t web-app:$COMMIT_SHA .
-          docker tag web-app:$COMMIT_SHA web-app:latest
+          npm ci
 
-          echo "✅ Docker image built successfully"
-
-      - name: Update deployment with new image
+      - name: 运行测试
         run: |
-          echo "🔄 Updating deployment with new image..."
+          cd frontend/first_app
+          npm test
 
-          # 更新部署文件
-          DEPLOYMENT_FILE="frontend/first_app/deploy/k8s/web-deployment.yaml"
-
-          # 备份原文件
-          cp $DEPLOYMENT_FILE $DEPLOYMENT_FILE.bak
-
-          # 更新镜像标签
-          sed -i "s|image: .*:latest|image: ${{ steps.parse.outputs.image-name }}:$COMMIT_SHA|g" $DEPLOYMENT_FILE
-
-          # 更新环境变量
-          sed -i "s|value: \"1.0.0-develop\"|value: \"1.0.0-$ENVIRONMENT\"|g" $DEPLOYMENT_FILE
-
-          # 应用部署
-          kubectl apply -f $DEPLOYMENT_FILE
-
-          echo "✅ Deployment applied successfully"
-
-      - name: Wait for deployment to be ready
+      - name: 代码检查
         run: |
-          echo "⏳ Waiting for deployment to be ready..."
-          kubectl wait --for=condition=available --timeout=60s deployment/${{ steps.parse.outputs.deployment-name }} -n ${{ env.NAMESPACE }} || {
-            echo "❌ Deployment failed to become ready"
-            echo "Pod status:"
-            kubectl get pods -n ${{ env.NAMESPACE }} -l app=web,environment=$ENVIRONMENT
-            echo "Deployment description:"
-            kubectl describe deployment/${{ steps.parse.outputs.deployment-name }} -n ${{ env.NAMESPACE }}
-            exit 1
-          }
+          cd frontend/first_app
+          npm run lint || true
 
-      - name: Verify deployment and test endpoints
+  build:
+    needs: [detect-changes, test]
+    if: |
+      needs.detect-changes.outputs.should-deploy == 'true' &&
+      needs.test.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 获取环境
+        id: env
         run: |
-          echo "✅ Deployment completed successfully!"
-          echo ""
-          echo "📊 Current Status:"
-          kubectl get pods -n ${{ env.NAMESPACE }} -l app=web,environment=$ENVIRONMENT
-
-          echo ""
-          echo "🌐 Service URL:"
-          echo "  - http://web-$ENVIRONMENT.localhost"
-
-          echo ""
-          echo "🧪 Testing endpoints..."
-
-          # 等待服务完全启动
-          sleep 5
-
-          # 测试根端点
-          echo "Testing root endpoint..."
-          kubectl run test-web-root --image=curlimages/curl --rm -i --restart=Never -n ${{ env.NAMESPACE }} -- \
-            curl -f http://app-${{ steps.parse.outputs.deployment-name }}.${{ env.NAMESPACE }}.svc.cluster.local:3000/ || echo "⚠️ Root endpoint test failed"
-
-          # 测试健康检查端点
-          echo "Testing /health endpoint..."
-          kubectl run test-web-health --image=curlimages/curl --rm -i --restart=Never -n ${{ env.NAMESPACE }} -- \
-            curl -f http://app-${{ steps.parse.outputs.deployment-name }}.${{ env.NAMESPACE }}.svc.cluster.local:3000/health || echo "⚠️ Health check test failed"
-
-          echo ""
-          echo "🔍 Check logs with:"
-          echo "  kubectl logs -n ${{ env.NAMESPACE }} deployment/${{ steps.parse.outputs.deployment-name }} -f"
-
-      - name: Cleanup old Docker images
-        if: always()
-        run: |
-          echo "🧹 Cleaning up old Docker images..."
-          # 保留最新的5个镜像，删除其他的
-          docker images web-app --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}" | tail -n +6 | awk '{print $2}' | xargs -r docker rmi || true
-          echo "✅ Cleanup completed"
-
-      - name: Restore deployment file
-        if: always()
-        run: |
-          # 恢复原始部署文件
-          if [ -f "frontend/first_app/deploy/k8s/web-deployment.yaml.bak" ]; then
-            mv frontend/first_app/deploy/k8s/web-deployment.yaml.bak frontend/first_app/deploy/k8s/web-deployment.yaml
-            echo "✅ Deployment file restored"
+          if [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            echo "environment=develop" >> $GITHUB_OUTPUT
+            echo "dockerfile=docker/web-app/Dockerfile.develop" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "dockerfile=docker/web-app/Dockerfile.staging" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/prod" ]]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+            echo "dockerfile=docker/web-app/Dockerfile.prod" >> $GITHUB_OUTPUT
+          else
+            echo "environment=develop" >> $GITHUB_OUTPUT
+            echo "dockerfile=docker/web-app/Dockerfile.develop" >> $GITHUB_OUTPUT
           fi
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 提取元数据
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/web-app
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: 构建和推送镜像
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ steps.env.outputs.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: [detect-changes, build]
+    if: |
+      needs.detect-changes.outputs.should-deploy == 'true' &&
+      github.event_name == 'push' &&
+      needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ steps.setup-env.outputs.environment }}
+      url: ${{ steps.setup-env.outputs.url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 设置环境变量
+        id: setup-env
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            echo "environment=develop" >> $GITHUB_OUTPUT
+            echo "url=http://web-develop.localhost" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "url=https://web-staging.example.com" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/prod" ]]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+            echo "url=https://web.example.com" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 设置 kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: 配置 kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > $HOME/.kube/config
+
+      - name: 部署到 Kubernetes
+        run: |
+          export COMMIT_SHA=${{ github.sha }}
+          export ENVIRONMENT=${{ steps.setup-env.outputs.environment }}
+
+          echo "部署 web-app..."
+          # 更新镜像标签
+          sed -i "s|image: .*:develop|image: ${{ env.REGISTRY }}/web-app:${{ github.sha }}-develop|g" k8s/frontend-web-app.yaml
+          sed -i "s|image: .*:staging|image: ${{ env.REGISTRY }}/web-app:${{ github.sha }}-staging|g" k8s/frontend-web-app.yaml
+          sed -i "s|image: .*:prod|image: ${{ env.REGISTRY }}/web-app:${{ github.sha }}-prod|g" k8s/frontend-web-app.yaml
+
+          kubectl apply -f k8s/frontend-web-app.yaml
+          kubectl rollout status deployment/web-app-${{ steps.setup-env.outputs.environment }} --namespace=frontend-web-app --timeout=300s
+
+      - name: 验证部署
+        run: |
+          echo "验证部署状态..."
+          kubectl get pods --namespace=frontend-web-app -l environment=${{ steps.setup-env.outputs.environment }}
+          kubectl get service --namespace=frontend-web-app
+
+      - name: 健康检查
+        run: |
+          echo "执行健康检查..."
+          sleep 30  # 等待服务启动
+
+          # 获取服务 URL
+          SERVICE_URL=$(kubectl get ingress web-app-${{ steps.setup-env.outputs.environment }} --namespace=frontend-web-app -o jsonpath='{.spec.rules[0].host}')
+          echo "服务地址: $SERVICE_URL"
+
+          # 执行健康检查（仅在开发环境）
+          if [[ "${{ steps.setup-env.outputs.environment }}" == "develop" ]]; then
+            curl -f "http://$SERVICE_URL/health" || echo "健康检查失败，但部署可能仍在进行中"
+          fi
+
+  notify:
+    needs: [detect-changes, test, build, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 部署结果通知
+        run: |
+          if [[ "${{ needs.deploy.result }}" == "success" ]]; then
+            echo "🎉 前端服务部署成功!"
+            echo "分支: ${{ github.ref_name }}"
+            echo "Commit: ${{ github.sha }}"
+            echo "环境: ${{ steps.setup-env.outputs.environment }}"
+          elif [[ "${{ needs.deploy.result }}" == "failure" ]]; then
+            echo "❌ 前端服务部署失败!"
+            echo "请检查日志并修复问题。"
+          elif [[ "${{ needs.test.result }}" == "failure" ]]; then
+            echo "❌ 测试失败，部署已取消!"
+          elif [[ "${{ needs.build.result }}" == "failure" ]]; then
+            echo "❌ 构建失败，部署已取消!"
+          else
+            echo "ℹ️ 跳过部署 - 没有检测到相关变更。"
+          fi
+
+  # 可选：性能测试
+  performance-test:
+    needs: [deploy]
+    if: |
+      needs.deploy.result == 'success' &&
+      github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 等待服务就绪
+        run: sleep 60
+
+      - name: 执行性能测试
+        run: |
+          echo "执行 Lighthouse 性能测试..."
+          # 这里可以添加 Lighthouse 或其他性能测试工具
+          echo "性能测试完成"

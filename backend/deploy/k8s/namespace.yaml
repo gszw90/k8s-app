@@ -18,7 +18,7 @@ data:
   LOG_FORMAT: "json"
 ---
 # Traefik 中间件配置
-apiVersion: traefik.containo.us/v1alpha1
+apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
   name: headers-develop
@@ -28,19 +28,8 @@ spec:
     customRequestHeaders:
       X-Environment: "develop"
       X-Forwarded-Proto: "https"
-    accessControlAllowOrigins:
-      - "*"
-    accessControlAllowMethods:
-      - GET
-      - POST
-      - PUT
-      - DELETE
-      - OPTIONS
-    accessControlAllowHeaders:
-      - "*"
-    accessControlMaxAge: 100
 ---
-apiVersion: traefik.containo.us/v1alpha1
+apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
   name: headers-staging
@@ -50,19 +39,8 @@ spec:
     customRequestHeaders:
       X-Environment: "staging"
       X-Forwarded-Proto: "https"
-    accessControlAllowOrigins:
-      - "*"
-    accessControlAllowMethods:
-      - GET
-      - POST
-      - PUT
-      - DELETE
-      - OPTIONS
-    accessControlAllowHeaders:
-      - "*"
-    accessControlMaxAge: 100
 ---
-apiVersion: traefik.containo.us/v1alpha1
+apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
   name: headers-prod
@@ -72,14 +50,3 @@ spec:
     customRequestHeaders:
       X-Environment: "production"
       X-Forwarded-Proto: "https"
-    accessControlAllowOrigins:
-      - "https://yourdomain.com"
-    accessControlAllowMethods:
-      - GET
-      - POST
-      - PUT
-      - DELETE
-      - OPTIONS
-    accessControlAllowHeaders:
-      - "*"
-    accessControlMaxAge: 100
