@@ -37,28 +37,109 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: 调试环境信息
+        run: |
+          echo "🐛 调试信息开始"
+          echo "当前工作目录: $(pwd)"
+          echo "用户: $(whoami)"
+          echo "环境变量:"
+          env | grep GITHUB | head -10
+          echo ""
+          echo "目录结构:"
+          ls -la
+          echo ""
+          echo "scripts 目录:"
+          ls -la scripts/ || echo "❌ scripts 目录不存在"
+          echo ""
+          echo "分支名称: ${{ github.ref_name }}"
+          echo "🐛 调试信息结束"
+
       - name: 解析分支信息
         id: parse
         run: |
           BRANCH="${{ github.ref_name }}"
           echo "🔍 解析分支: $BRANCH"
 
+          # 检查脚本文件
+          echo "📋 检查脚本文件:"
+          if [ -f "./scripts/parse-branch.sh" ]; then
+            echo "✅ 脚本文件存在"
+            echo "文件权限: $(ls -la ./scripts/parse-branch.sh)"
+            echo "文件大小: $(wc -l ./scripts/parse-branch.sh)"
+          else
+            echo "❌ 脚本文件不存在"
+            echo "当前目录内容:"
+            find . -name "*.sh" -type f
+            exit 1
+          fi
+
           # 执行分支解析脚本
+          echo "🚀 执行解析脚本..."
           ./scripts/parse-branch.sh "$BRANCH" > /tmp/branch-output.txt 2>&1
+          SCRIPT_EXIT_CODE=$?
 
-          # 捕获输出
+          echo "📋 脚本执行结果:"
+          echo "退出代码: $SCRIPT_EXIT_CODE"
+          echo "输出文件大小: $(wc -c /tmp/branch-output.txt)"
+          echo ""
+
+          # 显示完整输出
+          echo "📄 脚本完整输出:"
           cat /tmp/branch-output.txt
+          echo ""
 
-          # 提取关键信息
-          DOMAIN=$(grep "域:" /tmp/branch-output.txt | awk '{print $2}')
-          APP_NAME=$(grep "应用名:" /tmp/branch-output.txt | awk '{print $2}')
-          ENVIRONMENT=$(grep "环境:" /tmp/branch-output.txt | awk '{print $2}')
-          APP_DIR=$(grep "应用目录:" /tmp/branch-output.txt | awk '{print $2}')
-          DOCKERFILE=$(grep "Dockerfile:" /tmp/branch-output.txt | awk '{print $2}')
-          SERVICE_NAME=$(grep "服务名:" /tmp/branch-output.txt | awk '{print $2}')
-          PORT=$(grep "端口:" /tmp/branch-output.txt | awk '{print $2}')
-          COMMIT_SHORT=$(grep "Commit:" /tmp/branch-output.txt | awk '{print $2}')
+          # 显示输出文件的每一行详细信息
+          echo "🔍 输出文件逐行分析:"
+          line_num=1
+          while IFS= read -r line; do
+            echo "第${line_num}行: '$line'"
+            line_num=$((line_num + 1))
+          done < /tmp/branch-output.txt
+          echo ""
 
+          # 提取关键信息 - 添加详细调试
+          echo "🧪 开始提取变量..."
+
+          # 尝试不同的提取方法
+          echo "方法1: 使用 awk 提取"
+          DOMAIN=$(grep "域:" /tmp/branch-output.txt | awk '{print $2}' || echo "NOT_FOUND")
+          APP_NAME=$(grep "应用名:" /tmp/branch-output.txt | awk '{print $2}' || echo "NOT_FOUND")
+          ENVIRONMENT=$(grep "环境:" /tmp/branch-output.txt | awk '{print $2}' || echo "NOT_FOUND")
+          APP_DIR=$(grep "应用目录:" /tmp/branch-output.txt | awk '{print $2}' || echo "NOT_FOUND")
+          DOCKERFILE=$(grep "Dockerfile:" /tmp/branch-output.txt | awk '{print $2}' || echo "NOT_FOUND")
+          SERVICE_NAME=$(grep "服务名:" /tmp/branch-output.txt | awk '{print $2}' || echo "NOT_FOUND")
+          PORT=$(grep "端口:" /tmp/branch-output.txt | awk '{print $2}' || echo "NOT_FOUND")
+          COMMIT_SHORT=$(grep "Commit:" /tmp/branch-output.txt | awk '{print $2}' || echo "NOT_FOUND")
+
+          echo "提取结果:"
+          echo "  DOMAIN: '$DOMAIN'"
+          echo "  APP_NAME: '$APP_NAME'"
+          echo "  ENVIRONMENT: '$ENVIRONMENT'"
+          echo "  APP_DIR: '$APP_DIR'"
+          echo "  DOCKERFILE: '$DOCKERFILE'"
+          echo "  SERVICE_NAME: '$SERVICE_NAME'"
+          echo "  PORT: '$PORT'"
+          echo "  COMMIT_SHORT: '$COMMIT_SHORT'"
+          echo ""
+
+          # 验证目录存在性
+          if [ "$APP_DIR" != "NOT_FOUND" ] && [ -n "$APP_DIR" ]; then
+            echo "📂 验证应用目录: $APP_DIR"
+            if [ -d "$APP_DIR" ]; then
+              echo "✅ 应用目录存在"
+              echo "目录内容:"
+              ls -la "$APP_DIR"
+            else
+              echo "❌ 应用目录不存在"
+              echo "当前目录下的 backend/app:"
+              ls -la backend/app/ 2>/dev/null || echo "backend/app 目录不存在"
+            fi
+          else
+            echo "❌ APP_DIR 提取失败"
+          fi
+
+          # 设置输出变量
+          echo "📤 设置输出变量..."
           echo "domain=$DOMAIN" >> $GITHUB_OUTPUT
           echo "app-name=$APP_NAME" >> $GITHUB_OUTPUT
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
@@ -67,18 +148,69 @@ jobs:
           echo "service-name=$SERVICE_NAME" >> $GITHUB_OUTPUT
           echo "port=$PORT" >> $GITHUB_OUTPUT
           echo "commit-short=$COMMIT_SHORT" >> $GITHUB_OUTPUT
+          echo "✅ 变量设置完成"
 
       - name: 检查文件变更
         id: check
         run: |
+          echo "🔍 检查文件变更步骤"
+
+          # 获取前面步骤的输出
           APP_DIR="${{ steps.parse.outputs.app-dir }}"
-          if [ -n "$APP_DIR" ] && [ -d "$APP_DIR" ]; then
-            echo "✅ 找到应用目录: $APP_DIR"
-            echo "should-deploy=true" >> $GITHUB_OUTPUT
-          else
-            echo "❌ 应用目录不存在: $APP_DIR"
+          DOMAIN="${{ steps.parse.outputs.domain }}"
+          APP_NAME="${{ steps.parse.outputs.app-name }}"
+          ENVIRONMENT="${{ steps.parse.outputs.environment }}"
+
+          echo "📋 接收到的变量:"
+          echo "  APP_DIR: '$APP_DIR'"
+          echo "  DOMAIN: '$DOMAIN'"
+          echo "  APP_NAME: '$APP_NAME'"
+          echo "  ENVIRONMENT: '$ENVIRONMENT'"
+          echo ""
+
+          # 详细的条件检查
+          echo "🧪 执行条件检查..."
+
+          # 检查 APP_DIR 是否为空
+          if [ -z "$APP_DIR" ]; then
+            echo "❌ APP_DIR 为空"
             echo "should-deploy=false" >> $GITHUB_OUTPUT
+            echo "🚫 部署被跳过: APP_DIR 为空"
+            exit 0
           fi
+
+          # 检查 APP_DIR 是否等于 NOT_FOUND
+          if [ "$APP_DIR" = "NOT_FOUND" ]; then
+            echo "❌ APP_DIR 提取失败 (NOT_FOUND)"
+            echo "should-deploy=false" >> $GITHUB_OUTPUT
+            echo "🚫 部署被跳过: APP_DIR 提取失败"
+            exit 0
+          fi
+
+          # 检查目录是否存在
+          if [ ! -d "$APP_DIR" ]; then
+            echo "❌ 应用目录不存在: $APP_DIR"
+            echo "📂 当前目录结构:"
+            find . -name "*app*" -type d | head -10
+            echo ""
+            echo "backend 目录:"
+            ls -la backend/ 2>/dev/null || echo "backend 目录不存在"
+            echo ""
+            echo "backend/app 目录:"
+            ls -la backend/app/ 2>/dev/null || echo "backend/app 目录不存在"
+            echo "should-deploy=false" >> $GITHUB_OUTPUT
+            echo "🚫 部署被跳过: 应用目录不存在"
+            exit 0
+          fi
+
+          # 所有检查通过
+          echo "✅ 所有检查通过"
+          echo "✅ 找到应用目录: $APP_DIR"
+          echo "📂 应用目录内容:"
+          ls -la "$APP_DIR"
+          echo ""
+          echo "should-deploy=true" >> $GITHUB_OUTPUT
+          echo "🚀 准备部署"
 
   # 构建 Docker 镜像
   build:
