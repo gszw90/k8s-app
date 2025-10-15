@@ -403,9 +403,14 @@ jobs:
           K8S_CONFIG="k8s/local-dev-apps.yaml"
           if [ -f "$K8S_CONFIG" ]; then
             echo "📝 更新 K8s 配置文件"
-            sed -i.bak "s|image: .*:develop|image: $IMAGE_TAG|g" "$K8S_CONFIG"
-            sed -i.bak "s|image: .*:staging|image: $IMAGE_TAG|g" "$K8S_CONFIG"
-            sed -i.bak "s|image: .*:prod|image: $IMAGE_TAG|g" "$K8S_CONFIG"
+            echo "🔧 更新镜像: $APP_NAME 从旧版本到 $IMAGE_TAG"
+
+            # 使用更精确的 sed 命令匹配 app-name 并更新镜像
+            sed -i.bak "s|image: $APP_NAME:.*|image: $IMAGE_TAG|g" "$K8S_CONFIG"
+
+            # 验证更新是否成功
+            echo "📋 验证镜像更新结果:"
+            grep "image: $APP_NAME" "$K8S_CONFIG" || echo "❌ 未找到 $APP_NAME 的镜像配置"
           else
             echo "❌ K8s 配置文件不存在: $K8S_CONFIG"
             echo "deployment-success=false" >> $GITHUB_OUTPUT
