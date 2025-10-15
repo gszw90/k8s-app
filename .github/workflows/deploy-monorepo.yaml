@@ -285,7 +285,7 @@ jobs:
 
           # 验证安装
           echo "✅ kubectl 安装完成"
-          kubectl version --client --short
+          kubectl version --client
           echo ""
 
           # 设置环境变量
@@ -317,7 +317,7 @@ jobs:
           echo "📋 基本信息:"
           echo "当前用户: $(whoami)"
           echo "工作目录: $(pwd)"
-          echo "kubectl 版本: $(kubectl version --client --short 2>/dev/null || echo '未安装')"
+          echo "kubectl 版本: $(kubectl version --client 2>/dev/null | head -n 1 || echo '未安装')"
           echo ""
 
           # 配置文件检查
@@ -387,7 +387,7 @@ jobs:
           if ! kubectl cluster-info --request-timeout=30s; then
             echo "❌ 无法连接到 Kubernetes 集群"
             echo "🔧 调试信息:"
-            echo "  kubectl 版本: $(kubectl version --client --short 2>/dev/null || echo '未知')"
+            echo "  kubectl 版本: $(kubectl version --client 2>/dev/null | head -n 1 || echo '未知')"
             echo "  当前上下文: $(kubectl config current-context 2>/dev/null || echo '未知')"
             echo "  kubeconfig 位置: ${KUBECONFIG:-$HOME/.kube/config}"
             echo "  配置文件存在: $([ -f "${KUBECONFIG:-$HOME/.kube/config}" ] && echo '是' || echo '否')"
