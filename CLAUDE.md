@@ -84,3 +84,9 @@ The workflow (`.github/workflows/deploy-backend.yaml`) runs on self-hosted runne
 - Frontend serves version info from `VERSION` environment variable
 - No external database dependencies - all services are stateless
 - Health check endpoint available on frontend at `/health`
+
+## language-chat
+使用中文来交流对话，代码中使用英文作为注释
+
+## 命令执行
+我的sudo密码是weiwei，一般正常的命令不需要使用sudo权限，只有明确提示权限不足时才使用sudo。
