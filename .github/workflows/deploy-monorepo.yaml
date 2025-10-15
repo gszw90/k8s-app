@@ -273,6 +273,64 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Kubernetes 连接诊断
+        run: |
+          echo "🔍 Kubernetes 连接诊断开始"
+
+          # 基本信息
+          echo "📋 基本信息:"
+          echo "当前用户: $(whoami)"
+          echo "工作目录: $(pwd)"
+          echo "kubectl 版本: $(kubectl version --client --short 2>/dev/null || echo '未安装')"
+          echo ""
+
+          # 配置文件检查
+          echo "📁 kubeconfig 配置检查:"
+          if [ -f "$HOME/.kube/config" ]; then
+            echo "✅ kubeconfig 文件存在: $HOME/.kube/config"
+            echo "文件权限: $(ls -la $HOME/.kube/config)"
+            echo "文件大小: $(wc -l < $HOME/.kube/config) 行"
+          else
+            echo "❌ kubeconfig 文件不存在"
+            echo "查找可能的配置文件:"
+            find /home -name "config" -path "*/.kube/*" 2>/dev/null | head -5
+            echo "检查环境变量:"
+            env | grep -i kube | head -5
+          fi
+          echo ""
+
+          # 当前上下文
+          echo "🎯 当前上下文:"
+          kubectl config current-context 2>/dev/null || echo "❌ 无法获取当前上下文"
+          echo ""
+
+          # 集群连接测试
+          echo "🔗 集群连接测试:"
+          echo "尝试连接集群..."
+          if kubectl cluster-info --request-timeout=10s 2>/dev/null; then
+            echo "✅ 集群连接成功"
+            echo ""
+            echo "📊 集群详细信息:"
+            kubectl cluster-info
+            echo ""
+            echo "🔧 节点状态:"
+            kubectl get nodes -o wide 2>/dev/null || echo "❌ 无法获取节点信息"
+            echo ""
+            echo "🏷️ 可用命名空间:"
+            kubectl get namespaces 2>/dev/null || echo "❌ 无法获取命名空间"
+          else
+            echo "❌ 集群连接失败"
+            echo "详细错误信息:"
+            kubectl cluster-info --request-timeout=10s 2>&1 || echo "无法连接"
+            echo ""
+            echo "🔧 故障排除建议:"
+            echo "1. 检查 kubeconfig 文件是否正确挂载到 runner"
+            echo "2. 验证集群是否正在运行"
+            echo "3. 确认网络连接和防火墙设置"
+            echo "4. 检查 ServiceAccount 权限"
+          fi
+          echo "🔍 Kubernetes 连接诊断结束"
+
       - name: 部署到 Kubernetes
         id: deploy
         run: |
@@ -288,12 +346,19 @@ jobs:
           echo "命名空间: $NAMESPACE"
           echo "镜像: $IMAGE_TAG"
 
-          # 验证 K8s 集群连接
-          if ! kubectl cluster-info &> /dev/null; then
+          # 验证 K8s 集群连接 (增强版)
+          echo "🔍 最终集群连接验证..."
+          if ! kubectl cluster-info --request-timeout=30s; then
             echo "❌ 无法连接到 Kubernetes 集群"
+            echo "🔧 调试信息:"
+            echo "  kubectl 版本: $(kubectl version --client --short 2>/dev/null || echo '未知')"
+            echo "  当前上下文: $(kubectl config current-context 2>/dev/null || echo '未知')"
+            echo "  kubeconfig 位置: ${KUBECONFIG:-$HOME/.kube/config}"
+            echo "  配置文件存在: $([ -f "${KUBECONFIG:-$HOME/.kube/config}" ] && echo '是' || echo '否')"
             echo "deployment-success=false" >> $GITHUB_OUTPUT
             exit 1
           fi
+          echo "✅ 集群连接验证通过"
 
           # 确保 namespace 存在
           kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
