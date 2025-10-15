@@ -33,12 +33,12 @@ fi
 if [ "$DOMAIN" = "backend" ]; then
     APP_DIR="backend/app/${APP_NAME//-/_}"
     DOCKERFILE="docker/${APP_NAME}/Dockerfile.${ENVIRONMENT}"
-    SERVICE_NAME="${APP_NAME}"
+    SERVICE_NAME="${APP_NAME//-/_}"
     PORT=$(echo "$APP_NAME" | grep -o '[0-9]\+' || echo "18080")
 elif [ "$DOMAIN" = "frontend" ]; then
     APP_DIR="frontend/${APP_NAME//-/_}"
     DOCKERFILE="docker/${APP_NAME}/Dockerfile.${ENVIRONMENT}"
-    SERVICE_NAME="${APP_NAME}"
+    SERVICE_NAME="${APP_NAME//-/_}"
     PORT="3000"
 else
     echo "❌ 不支持的域: $DOMAIN"
@@ -60,11 +60,15 @@ echo "  端口: $PORT"
 echo "  Commit: $COMMIT_SHORT"
 
 # 输出环境变量（供 GitHub Actions 使用）
-echo "::set-output name=domain::$DOMAIN"
-echo "::set-output name=app-name::$APP_NAME"
-echo "::set-output name=environment::$ENVIRONMENT"
-echo "::set-output name=app-dir::$APP_DIR"
-echo "::set-output name=dockerfile::$DOCKERFILE"
-echo "::set-output name=service-name::$SERVICE_NAME"
-echo "::set-output name=port::$PORT"
-echo "::set-output name=commit-short::$COMMIT_SHORT"
+if [ -n "$GITHUB_OUTPUT" ]; then
+    echo "domain=$DOMAIN" >> $GITHUB_OUTPUT
+    echo "app-name=$APP_NAME" >> $GITHUB_OUTPUT
+    echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+    echo "app-dir=$APP_DIR" >> $GITHUB_OUTPUT
+    echo "dockerfile=$DOCKERFILE" >> $GITHUB_OUTPUT
+    echo "service-name=$SERVICE_NAME" >> $GITHUB_OUTPUT
+    echo "port=$PORT" >> $GITHUB_OUTPUT
+    echo "commit-short=$COMMIT_SHORT" >> $GITHUB_OUTPUT
+else
+    echo "ℹ️ 本地运行模式 - GitHub Actions 输出跳过"
+fi
