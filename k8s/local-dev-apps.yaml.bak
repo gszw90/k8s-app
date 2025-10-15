@@ -176,7 +176,7 @@ spec:
     spec:
       containers:
       - name: web-app
-        image: web-app:PLACEHOLDER
+        image: web-app:8575e4a
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000
