@@ -273,6 +273,42 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: 安装 kubectl 和配置环境
+        run: |
+          echo "🔧 安装 kubectl 和配置 Kubernetes 环境"
+
+          # 安装 kubectl
+          echo "📦 安装 kubectl..."
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+          # 验证安装
+          echo "✅ kubectl 安装完成"
+          kubectl version --client --short
+          echo ""
+
+          # 设置环境变量
+          echo "🔧 配置环境变量..."
+          export KUBECONFIG=/home/zeng/.kube/config
+          echo "KUBECONFIG=$KUBECONFIG" >> $GITHUB_ENV
+          echo "✅ 环境变量配置完成"
+          echo ""
+
+          # 验证 kubeconfig 文件
+          echo "📁 验证 kubeconfig 文件..."
+          if [ -f "$KUBECONFIG" ]; then
+            echo "✅ kubeconfig 文件存在: $KUBECONFIG"
+            echo "文件权限: $(ls -la $KUBECONFIG)"
+            echo "当前上下文: $(kubectl config current-context)"
+          else
+            echo "❌ kubeconfig 文件不存在: $KUBECONFIG"
+            echo "查找配置文件:"
+            find /home -name "config" -path "*/.kube/*" 2>/dev/null | head -5
+            exit 1
+          fi
+          echo "🔧 kubectl 环境配置完成"
+
       - name: Kubernetes 连接诊断
         run: |
           echo "🔍 Kubernetes 连接诊断开始"
