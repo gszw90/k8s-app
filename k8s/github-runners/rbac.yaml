@@ -1,0 +1,144 @@
+# GitHub Runner RBAC 配置
+---
+# ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-runner-sa
+  namespace: github-runners
+  labels:
+    app: github-runner
+    component: service-account
+
+---
+# Role - 定义 Runner 在 github-runners namespace 中的权限
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-runner-role
+  namespace: github-runners
+  labels:
+    app: github-runner
+    component: role
+rules:
+  # Pod 管理权限
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # ConfigMap 和 Secret 管理权限
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # PVC 管理权限
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Service 管理权限
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Event 查看权限
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+
+  # Deployment 管理权限
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # ReplicaSet 管理权限
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Job 管理权限
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Ingress 管理权限
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # NetworkPolicy 管理权限
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+# RoleBinding - 绑定 ServiceAccount 和 Role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: github-runner-rolebinding
+  namespace: github-runners
+  labels:
+    app: github-runner
+    component: role-binding
+subjects:
+  - kind: ServiceAccount
+    name: github-runner-sa
+    namespace: github-runners
+roleRef:
+  kind: Role
+  name: github-runner-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ClusterRole - 如果需要跨 namespace 权限
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: github-runner-clusterrole
+  labels:
+    app: github-runner
+    component: cluster-role
+rules:
+  # Namespace 管理权限
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+
+  # Node 查看权限
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+
+  # PV 和 PVC 查看权限
+  - apiGroups: [""]
+    resources: ["persistentvolumes", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+
+  # 存储类查看权限
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+
+  # CRD 查看权限
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding - 绑定 ServiceAccount 和 ClusterRole (可选)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: github-runner-clusterrolebinding
+  labels:
+    app: github-runner
+    component: cluster-role-binding
+subjects:
+  - kind: ServiceAccount
+    name: github-runner-sa
+    namespace: github-runners
+roleRef:
+  kind: ClusterRole
+  name: github-runner-clusterrole
+  apiGroup: rbac.authorization.k8s.io

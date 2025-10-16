@@ -1,0 +1,40 @@
+# GitHub Runner ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: github-runner-config
+  namespace: github-runners
+  labels:
+    app: github-runner
+    component: config
+data:
+  # GitHub 仓库配置
+  RUNNER_NAME: "k8s-runner-local"
+  REPO_URL: "https://github.com/gszw90/k8s-app"
+  RUNNER_REPO: "gszw90/k8s-app"
+  RUNNER_GROUP: "default"
+  RUNNER_WORKDIR: "/tmp/github-runner-workdir"
+
+  # Runner 标签
+  RUNNER_LABELS: "k8s,self-hosted,local"
+
+  # 环境配置
+  RUNNER_ORG: ""
+  RUNNER_ENTERPRISE: ""
+
+  # 运行时配置
+  RUNNER_EPHEMERAL: "false"
+  RUNNER_NO_RETRY_INTERVAL: "30"
+  RUNNER_MAX_RETRY: "3"
+
+  # 调试选项
+  RUNNER_DEBUG: "false"
+  RUNNER_LOG_LEVEL: "info"
+
+  # 资源清理
+  RUNNER_DISABLE_UPDATE: "true"
+
+  # 网络配置
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""
+  NO_PROXY: "localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"

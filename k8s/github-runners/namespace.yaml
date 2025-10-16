@@ -1,0 +1,10 @@
+# GitHub Runner 命名空间
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: github-runners
+  labels:
+    name: github-runners
+    environment: github-runners
+  annotations:
+    description: "GitHub Actions Runners namespace"
