@@ -34,7 +34,7 @@
 - **前端**: Node.js
 - **容器化**: Docker 多阶段构建
 - **编排**: Kubernetes (Docker Desktop)
-- **网关**: Traefik v2
+- **网关**: Traefik v3
 - **CI/CD**: GitHub Actions + 自托管 Runner
 - **监控**: Kubernetes 原生监控
 

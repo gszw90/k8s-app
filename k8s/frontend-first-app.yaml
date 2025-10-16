@@ -1,4 +1,4 @@
-# Backend Second App Kubernetes 配置文件
+# Frontend First App Kubernetes 配置文件
 # 支持多环境部署：develop, staging, prod
 # 使用环境变量进行配置替换
 
@@ -7,43 +7,45 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: backend-second-app-config
+  name: frontend-first-app-config
   namespace: ${NAMESPACE}
   labels:
-    app: backend-second-app
+    app: frontend-first-app
     environment: ${ENVIRONMENT}
 data:
   PORT: "${PORT}"
   LOG_LEVEL: "${LOG_LEVEL}"
   ENVIRONMENT: "${ENVIRONMENT}"
-  SERVICE_NAME: "backend-second-app"
+  SERVICE_NAME: "frontend-first-app"
+  API_BASE_URL: "${API_BASE_URL}"
+  VERSION: "${VERSION}"
 
 ---
 # Secret - 敏感数据 (生产环境需要加密)
 apiVersion: v1
 kind: Secret
 metadata:
-  name: backend-second-app-secret
+  name: frontend-first-app-secret
   namespace: ${NAMESPACE}
   labels:
-    app: backend-second-app
+    app: frontend-first-app
     environment: ${ENVIRONMENT}
 type: Opaque
 data:
-  # 示例：base64编码的数据库密码 (请替换为实际值)
-  # echo -n "your-password" | base64
-  DB_PASSWORD: "${DB_PASSWORD}"
+  # 示例：base64编码的API密钥 (请替换为实际值)
+  # echo -n "your-api-key" | base64
   API_KEY: "${API_KEY}"
+  SESSION_SECRET: "${SESSION_SECRET}"
 
 ---
 # Deployment - 应用部署配置
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: backend-second-app
+  name: frontend-first-app
   namespace: ${NAMESPACE}
   labels:
-    app: backend-second-app
+    app: frontend-first-app
     environment: ${ENVIRONMENT}
     version: "${IMAGE_TAG}"
 spec:
@@ -51,7 +53,7 @@ spec:
   revisionHistoryLimit: 10
   selector:
     matchLabels:
-      app: backend-second-app
+      app: frontend-first-app
       environment: ${ENVIRONMENT}
   strategy:
     type: RollingUpdate
@@ -61,49 +63,59 @@ spec:
   template:
     metadata:
       labels:
-        app: backend-second-app
+        app: frontend-first-app
         environment: ${ENVIRONMENT}
         version: "${IMAGE_TAG}"
     spec:
       containers:
-      - name: backend-second-app
+      - name: frontend-first-app
         image: ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
         imagePullPolicy: Always
         ports:
-        - containerPort: 18081
+        - containerPort: 3000
           name: http
           protocol: TCP
         env:
         - name: PORT
           valueFrom:
             configMapKeyRef:
-              name: backend-second-app-config
+              name: frontend-first-app-config
               key: PORT
         - name: LOG_LEVEL
           valueFrom:
             configMapKeyRef:
-              name: backend-second-app-config
+              name: frontend-first-app-config
               key: LOG_LEVEL
         - name: ENVIRONMENT
           valueFrom:
             configMapKeyRef:
-              name: backend-second-app-config
+              name: frontend-first-app-config
               key: ENVIRONMENT
         - name: SERVICE_NAME
           valueFrom:
             configMapKeyRef:
-              name: backend-second-app-config
+              name: frontend-first-app-config
               key: SERVICE_NAME
-        - name: DB_PASSWORD
+        - name: API_BASE_URL
           valueFrom:
-            secretKeyRef:
-              name: backend-second-app-secret
-              key: DB_PASSWORD
+            configMapKeyRef:
+              name: frontend-first-app-config
+              key: API_BASE_URL
+        - name: VERSION
+          valueFrom:
+            configMapKeyRef:
+              name: frontend-first-app-config
+              key: VERSION
         - name: API_KEY
           valueFrom:
             secretKeyRef:
-              name: backend-second-app-secret
+              name: frontend-first-app-secret
               key: API_KEY
+        - name: SESSION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: frontend-first-app-secret
+              key: SESSION_SECRET
         resources:
           requests:
             memory: "64Mi"
@@ -113,16 +125,16 @@ spec:
             cpu: "100m"
         livenessProbe:
           httpGet:
-            path: /ping
-            port: 18081
+            path: /health
+            port: 3000
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
         readinessProbe:
           httpGet:
-            path: /ping
-            port: 18081
+            path: /health
+            port: 3000
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3
@@ -134,31 +146,31 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: backend-second-app-service
+  name: frontend-first-app-service
   namespace: ${NAMESPACE}
   labels:
-    app: backend-second-app
+    app: frontend-first-app
     environment: ${ENVIRONMENT}
 spec:
   selector:
-    app: backend-second-app
+    app: frontend-first-app
     environment: ${ENVIRONMENT}
   ports:
   - name: http
     protocol: TCP
     port: 80
-    targetPort: 18081
+    targetPort: 3000
   type: ClusterIP
 
 ---
-# Ingress - 外部访问 (可选)
+# Ingress - 外部访问
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: backend-second-app-ingress
+  name: frontend-first-app-ingress
   namespace: ${NAMESPACE}
   labels:
-    app: backend-second-app
+    app: frontend-first-app
     environment: ${ENVIRONMENT}
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
@@ -167,14 +179,14 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-  - host: "${ENVIRONMENT}-backend-second-app.local"
+  - host: "${ENVIRONMENT}-frontend-first-app.local"
     http:
       paths:
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: backend-second-app-service
+            name: frontend-first-app-service
             port:
               number: 80
 
@@ -183,15 +195,15 @@ spec:
 # apiVersion: monitoring.coreos.com/v1
 # kind: ServiceMonitor
 # metadata:
-#   name: backend-second-app-monitor
+#   name: frontend-first-app-monitor
 #   namespace: ${NAMESPACE}
 #   labels:
-#     app: backend-second-app
+#     app: frontend-first-app
 #     environment: ${ENVIRONMENT}
 # spec:
 #   selector:
 #     matchLabels:
-#       app: backend-second-app
+#       app: frontend-first-app
 #       environment: ${ENVIRONMENT}
 #   endpoints:
 #   - port: http

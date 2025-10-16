@@ -1,81 +1,109 @@
-# Backend First App - 所有环境的 K8s 配置
+# Backend First App Kubernetes 配置文件
+# 支持多环境部署：develop, staging, prod
+# 使用环境变量进行配置替换
+
 ---
-# Namespace
+# ConfigMap - 环境特定配置
 apiVersion: v1
-kind: Namespace
+kind: ConfigMap
+metadata:
+  name: backend-first-app-config
+  namespace: ${NAMESPACE}
+  labels:
+    app: backend-first-app
+    environment: ${ENVIRONMENT}
+data:
+  PORT: "${PORT}"
+  LOG_LEVEL: "${LOG_LEVEL}"
+  ENVIRONMENT: "${ENVIRONMENT}"
+  SERVICE_NAME: "backend-first-app"
+
+---
+# Secret - 敏感数据 (生产环境需要加密)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backend-first-app-secret
+  namespace: ${NAMESPACE}
+  labels:
+    app: backend-first-app
+    environment: ${ENVIRONMENT}
+type: Opaque
+data:
+  # 示例：base64编码的数据库密码 (请替换为实际值)
+  # echo -n "your-password" | base64
+  DB_PASSWORD: "${DB_PASSWORD}"
+  API_KEY: "${API_KEY}"
+
+---
+# Deployment - 应用部署配置
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: backend-first-app
+  namespace: ${NAMESPACE}
   labels:
-    name: backend-first-app
-    environment: shared
-    purpose: application-deployment
----
-# ConfigMap - 开发环境
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: first-app-config-develop
-  namespace: backend-first-app
-data:
-  LOG_LEVEL: "debug"
-  GIN_MODE: "debug"
-  NODE_ENV: "development"
----
-# ConfigMap - 预发布环境
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: first-app-config-staging
-  namespace: backend-first-app
-data:
-  LOG_LEVEL: "info"
-  GIN_MODE: "release"
-  NODE_ENV: "staging"
----
-# ConfigMap - 生产环境
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: first-app-config-prod
-  namespace: backend-first-app
-data:
-  LOG_LEVEL: "error"
-  GIN_MODE: "release"
-  NODE_ENV: "production"
----
-# Deployment - 开发环境
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: first-app-develop
-  namespace: backend-first-app
-  labels:
-    app: first-app
-    environment: develop
-    version: develop
+    app: backend-first-app
+    environment: ${ENVIRONMENT}
+    version: "${IMAGE_TAG}"
 spec:
-  replicas: 1
+  replicas: ${REPLICAS}
+  revisionHistoryLimit: 10
   selector:
     matchLabels:
-      app: first-app
-      environment: develop
+      app: backend-first-app
+      environment: ${ENVIRONMENT}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
   template:
     metadata:
       labels:
-        app: first-app
-        environment: develop
-        version: develop
+        app: backend-first-app
+        environment: ${ENVIRONMENT}
+        version: "${IMAGE_TAG}"
     spec:
       containers:
-      - name: first-app
-        image: first-app:develop
-        imagePullPolicy: IfNotPresent
+      - name: backend-first-app
+        image: ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+        imagePullPolicy: Always
         ports:
         - containerPort: 18080
           name: http
-        envFrom:
-        - configMapRef:
-            name: first-app-config-develop
+          protocol: TCP
+        env:
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: backend-first-app-config
+              key: PORT
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: backend-first-app-config
+              key: LOG_LEVEL
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: backend-first-app-config
+              key: ENVIRONMENT
+        - name: SERVICE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: backend-first-app-config
+              key: SERVICE_NAME
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: backend-first-app-secret
+              key: DB_PASSWORD
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: backend-first-app-secret
+              key: API_KEY
         resources:
           requests:
             memory: "64Mi"
@@ -87,289 +115,86 @@ spec:
           httpGet:
             path: /ping
             port: 18080
-          initialDelaySeconds: 10
-          periodSeconds: 30
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /ping
             port: 18080
           initialDelaySeconds: 5
-          periodSeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      restartPolicy: Always
+
 ---
-# Deployment - 预发布环境
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: first-app-staging
-  namespace: backend-first-app
-  labels:
-    app: first-app
-    environment: staging
-    version: staging
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: first-app
-      environment: staging
-  template:
-    metadata:
-      labels:
-        app: first-app
-        environment: staging
-        version: staging
-    spec:
-      containers:
-      - name: first-app
-        image: first-app:staging
-        imagePullPolicy: Always
-        ports:
-        - containerPort: 18080
-          name: http
-        envFrom:
-        - configMapRef:
-            name: first-app-config-staging
-        resources:
-          requests:
-            memory: "64Mi"
-            cpu: "50m"
-          limits:
-            memory: "256Mi"
-            cpu: "200m"
-        livenessProbe:
-          httpGet:
-            path: /ping
-            port: 18080
-          initialDelaySeconds: 10
-          periodSeconds: 30
-        readinessProbe:
-          httpGet:
-            path: /ping
-            port: 18080
-          initialDelaySeconds: 5
-          periodSeconds: 10
----
-# Deployment - 生产环境
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: first-app-prod
-  namespace: backend-first-app
-  labels:
-    app: first-app
-    environment: prod
-    version: prod
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: first-app
-      environment: prod
-  template:
-    metadata:
-      labels:
-        app: first-app
-        environment: prod
-        version: prod
-    spec:
-      containers:
-      - name: first-app
-        image: first-app:prod
-        imagePullPolicy: Always
-        ports:
-        - containerPort: 18080
-          name: http
-        envFrom:
-        - configMapRef:
-            name: first-app-config-prod
-        resources:
-          requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
-        livenessProbe:
-          httpGet:
-            path: /ping
-            port: 18080
-          initialDelaySeconds: 15
-          periodSeconds: 30
-        readinessProbe:
-          httpGet:
-            path: /ping
-            port: 18080
-          initialDelaySeconds: 10
-          periodSeconds: 10
----
-# Service - 开发环境
+# Service - 服务发现
 apiVersion: v1
 kind: Service
 metadata:
-  name: first-app-develop
-  namespace: backend-first-app
+  name: backend-first-app-service
+  namespace: ${NAMESPACE}
   labels:
-    app: first-app
-    environment: develop
+    app: backend-first-app
+    environment: ${ENVIRONMENT}
 spec:
   selector:
-    app: first-app
-    environment: develop
+    app: backend-first-app
+    environment: ${ENVIRONMENT}
   ports:
   - name: http
-    port: 18080
-    targetPort: 18080
     protocol: TCP
-  type: ClusterIP
----
-# Service - 预发布环境
-apiVersion: v1
-kind: Service
-metadata:
-  name: first-app-staging
-  namespace: backend-first-app
-  labels:
-    app: first-app
-    environment: staging
-spec:
-  selector:
-    app: first-app
-    environment: staging
-  ports:
-  - name: http
-    port: 18080
+    port: 80
     targetPort: 18080
-    protocol: TCP
   type: ClusterIP
+
 ---
-# Service - 生产环境
-apiVersion: v1
-kind: Service
-metadata:
-  name: first-app-prod
-  namespace: backend-first-app
-  labels:
-    app: first-app
-    environment: prod
-spec:
-  selector:
-    app: first-app
-    environment: prod
-  ports:
-  - name: http
-    port: 18080
-    targetPort: 18080
-    protocol: TCP
-  type: ClusterIP
----
-# Ingress - 开发环境
+# Ingress - 外部访问 (可选)
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: first-app-develop
-  namespace: backend-first-app
+  name: backend-first-app-ingress
+  namespace: ${NAMESPACE}
+  labels:
+    app: backend-first-app
+    environment: ${ENVIRONMENT}
   annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: "web"
-    traefik.ingress.kubernetes.io/router.middlewares: "backend-first-app-headers-develop@kubernetescrd"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
 spec:
+  ingressClassName: nginx
   rules:
-  - host: "first-app-develop.localhost"
+  - host: "${ENVIRONMENT}-backend-first-app.local"
     http:
       paths:
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: first-app-develop
+            name: backend-first-app-service
             port:
-              number: 18080
+              number: 80
+
 ---
-# Ingress - 预发布环境
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: first-app-staging
-  namespace: backend-first-app
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
-    traefik.ingress.kubernetes.io/router.middlewares: "backend-first-app-headers-staging@kubernetescrd"
-    traefik.ingress.kubernetes.io/router.tls: "true"
-spec:
-  tls:
-  - hosts:
-    - "first-app-staging.example.com"
-    secretName: first-app-staging-tls
-  rules:
-  - host: "first-app-staging.example.com"
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: first-app-staging
-            port:
-              number: 18080
----
-# Ingress - 生产环境
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: first-app-prod
-  namespace: backend-first-app
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
-    traefik.ingress.kubernetes.io/router.middlewares: "backend-first-app-headers-prod@kubernetescrd"
-    traefik.ingress.kubernetes.io/router.tls: "true"
-spec:
-  tls:
-  - hosts:
-    - "first-app.example.com"
-    secretName: first-app-prod-tls
-  rules:
-  - host: "first-app.example.com"
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: first-app-prod
-            port:
-              number: 18080
----
-# Middleware - 开发环境
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: headers-develop
-  namespace: backend-first-app
-spec:
-  headers:
-    customRequestHeaders:
-      X-Environment: "develop"
-      X-Forwarded-Proto: "http"
----
-# Middleware - 预发布环境
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: headers-staging
-  namespace: backend-first-app
-spec:
-  headers:
-    customRequestHeaders:
-      X-Environment: "staging"
-      X-Forwarded-Proto: "https"
----
-# Middleware - 生产环境
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: headers-prod
-  namespace: backend-first-app
-spec:
-  headers:
-    customRequestHeaders:
-      X-Environment: "production"
-      X-Forwarded-Proto: "https"
+# ServiceMonitor - 监控配置 (可选，需要 Prometheus Operator)
+# apiVersion: monitoring.coreos.com/v1
+# kind: ServiceMonitor
+# metadata:
+#   name: backend-first-app-monitor
+#   namespace: ${NAMESPACE}
+#   labels:
+#     app: backend-first-app
+#     environment: ${ENVIRONMENT}
+# spec:
+#   selector:
+#     matchLabels:
+#       app: backend-first-app
+#       environment: ${ENVIRONMENT}
+#   endpoints:
+#   - port: http
+#     path: /metrics
+#     interval: 30s
+#     scrapeTimeout: 10s
