@@ -376,7 +376,7 @@ jobs:
           echo "命名空间: $NAMESPACE"
           echo "镜像标签: $IMAGE_TAG"
 
-  # 使用正确的kubeconfig配置（WSL环境下的Docker Desktop K8s）
+          # 使用正确的kubeconfig配置（WSL环境下的Docker Desktop K8s）
           if [[ -n "$KUBE_CONFIG_DATA" ]]; then
             echo "🔧 使用外部KUBECONFIG..."
             mkdir -p ~/.kube

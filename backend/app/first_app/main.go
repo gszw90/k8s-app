@@ -52,7 +52,7 @@ func startServer() {
 	})
 	r.GET("/hello", func(c *gin.Context) {
 		c.JSON(200, gin.H{
-			"message": "hello world,this is first app 233",
+			"message": "hello world,this is first app 2334",
 		})
 	})
 	r.GET("/info", func(ctx *gin.Context) {
