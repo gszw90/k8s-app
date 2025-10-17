@@ -268,36 +268,57 @@ jobs:
           echo "镜像标签: $IMAGE_TAG"
           echo "Registry: $REGISTRY"
 
-          # 只为 backend 应用构建 Docker 镜像
-          if [ "$DOMAIN" = "backend" ]; then
-            DOCKERFILE="backend/deploy/Dockerfile-first-app"
+          # 使用新的统一构建系统为所有应用构建 Docker 镜像
+          DOCKERFILE="deploy/docker/${APP_NAME}/Dockerfile"
 
-            # 检查 Dockerfile 是否存在
-            if [ ! -f "$DOCKERFILE" ]; then
-              echo "❌ Dockerfile 不存在: $DOCKERFILE"
+          # 检查 Dockerfile 是否存在
+          if [ ! -f "$DOCKERFILE" ]; then
+            echo "❌ Dockerfile 不存在: $DOCKERFILE"
+            echo "build-success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # 构建镜像（支持配置注入）
+          FULL_IMAGE_TAG="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+          LATEST_TAG="${REGISTRY}/${IMAGE_NAME}:latest-${ENVIRONMENT}"
+
+          echo "🔨 开始构建: $FULL_IMAGE_TAG"
+          echo "📁 Dockerfile: $DOCKERFILE"
+          echo "⚙️  环境: $ENVIRONMENT"
+          echo "🏷️  应用: $APP_NAME"
+
+          # 使用新的构建脚本（如果存在）或直接使用docker命令
+          if [ -f "./scripts/build-docker.sh" ]; then
+            echo "🛠️ 使用统一构建脚本..."
+            ./scripts/build-docker.sh "$APP_NAME" "$ENVIRONMENT" --tag "$IMAGE_TAG"
+
+            # 验证构建结果
+            if docker images | grep -q "$IMAGE_NAME.*$IMAGE_TAG"; then
+              echo "image-tag=$FULL_IMAGE_TAG" >> $GITHUB_OUTPUT
+              echo "build-success=true" >> $GITHUB_OUTPUT
+            else
+              echo "image-tag=build-failed" >> $GITHUB_OUTPUT
               echo "build-success=false" >> $GITHUB_OUTPUT
-              exit 1
             fi
-
-            # 构建镜像
-            FULL_IMAGE_TAG="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
-            LATEST_TAG="${REGISTRY}/${IMAGE_NAME}:latest"
-
-            echo "🔨 开始构建: $FULL_IMAGE_TAG"
-            docker build -f "$DOCKERFILE" -t "$FULL_IMAGE_TAG" .
-
-            # 创建 latest 标签
-            docker tag "$FULL_IMAGE_TAG" "$LATEST_TAG"
-
-            echo "image-tag=$FULL_IMAGE_TAG" >> $GITHUB_OUTPUT
-            echo "build-success=true" >> $GITHUB_OUTPUT
-
-            echo "✅ 镜像构建完成"
-            docker images | grep "$IMAGE_NAME"
           else
-            echo "ℹ️ Frontend 应用跳过 Docker 镜像构建"
-            echo "image-tag=frontend-skip" >> $GITHUB_OUTPUT
-            echo "build-success=true" >> $GITHUB_OUTPUT
+            echo "🐳 直接使用 Docker 命令构建..."
+            docker build \
+              --build-arg CONFIG_ENV="$ENVIRONMENT" \
+              -f "$DOCKERFILE" \
+              -t "$FULL_IMAGE_TAG" \
+              -t "$LATEST_TAG" \
+              .
+
+            # 验证构建结果
+            if [ $? -eq 0 ]; then
+              echo "image-tag=$FULL_IMAGE_TAG" >> $GITHUB_OUTPUT
+              echo "build-success=true" >> $GITHUB_OUTPUT
+              echo "✅ 镜像构建完成"
+              docker images | grep "$IMAGE_NAME"
+            else
+              echo "image-tag=build-failed" >> $GITHUB_OUTPUT
+              echo "build-success=false" >> $GITHUB_OUTPUT
+            fi
           fi
 
   # 部署到 Kubernetes

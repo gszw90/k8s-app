@@ -1,0 +1,6 @@
+{
+  "name": "web_app",
+  "mode": "staging",
+  "version": "1.0.0-staging",
+  "port": 3000
+}

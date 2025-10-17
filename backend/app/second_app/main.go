@@ -1,9 +1,41 @@
 package main
 
-import "github.com/gin-gonic/gin"
+import (
+	"flag"
+	"os"
+
+	"github.com/gin-gonic/gin"
+	"github.com/goccy/go-yaml"
+)
+
+type Config struct {
+	Name string `yaml:"name"`
+	Mode string `yaml:"mode"`
+}
+
+var config Config
+var c string
+
+func init() {
+	// get config file from cli args
+	flag.StringVar(&c, "c", "config/config.yaml", "config file")
+	flag.Parse()
+
+	contents, err := os.ReadFile(c)
+	if err != nil {
+		panic(err)
+	}
+
+	err = yaml.Unmarshal(contents, &config)
+	if err != nil {
+		panic(err)
+	}
+}
 
 func main() {
-	// Initialize the game
+	// Initialize server
+	println("app name:", config.Name)
+	println("app mode:", config.Mode)
 	startServer()
 }
 

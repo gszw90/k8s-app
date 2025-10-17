@@ -1,0 +1,6 @@
+{
+  "name": "web_app",
+  "mode": "develop",
+  "version": "1.0.0-develop",
+  "port": 3000
+}

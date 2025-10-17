@@ -1,0 +1,299 @@
+# GitHub Runner 持久化存储配置
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: github-runner-state-pvc
+  namespace: github-runners
+  labels:
+    app: github-runner
+    component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: hostpath
+  resources:
+    requests:
+      storage: 5Gi
+---
+# GitHub Runner 配置更新
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: github-runner-config-updated
+  namespace: github-runners
+  labels:
+    app: github-runner
+    component: config
+data:
+  RUNNER_NAME: "k8s-runner-local"
+  REPO_URL: "https://github.com/gszw90/k8s-app"
+  RUNNER_REPO: "gszw90/k8s-app"
+  RUNNER_GROUP: "default"
+  RUNNER_WORKDIR: "/tmp/github-runner-workdir"
+  RUNNER_LABELS: "self-hosted,k8s,local"  # 匹配工作流程要求
+  RUNNER_ORG: ""
+  RUNNER_ENTERPRISE: ""
+  RUNNER_EPHEMERAL: "false"
+  RUNNER_NO_RETRY_INTERVAL: "30"
+  RUNNER_MAX_RETRY: "3"
+  RUNNER_DEBUG: "false"
+  RUNNER_LOG_LEVEL: "info"
+  RUNNER_DISABLE_UPDATE: "true"
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""
+  NO_PROXY: "localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+---
+# 更新的Runner部署配置
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-runner-fixed
+  namespace: github-runners
+  labels:
+    app: github-runner
+    component: deployment
+  annotations:
+    description: "GitHub Actions Self-hosted Runner with Persistence"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: github-runner
+      component: runner-fixed
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: github-runner
+        component: runner-fixed
+    spec:
+      serviceAccountName: github-runner-sa
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
+      containers:
+      - name: github-runner
+        # 使用之前可以工作的镜像
+        image: myoung34/github-runner:latest
+        imagePullPolicy: Always
+
+        env:
+        - name: RUNNER_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_NAME
+        - name: REPO_URL
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: REPO_URL
+        - name: RUNNER_REPO
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_REPO
+        - name: RUNNER_GROUP
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_GROUP
+        - name: RUNNER_WORKDIR
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_WORKDIR
+        - name: RUNNER_LABELS
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_LABELS
+        - name: RUNNER_ORG
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_ORG
+        - name: RUNNER_ENTERPRISE
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_ENTERPRISE
+        - name: RUNNER_EPHEMERAL
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_EPHEMERAL
+        - name: RUNNER_NO_RETRY_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_NO_RETRY_INTERVAL
+        - name: RUNNER_MAX_RETRY
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_MAX_RETRY
+        - name: RUNNER_DEBUG
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_DEBUG
+        - name: RUNNER_LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_LOG_LEVEL
+        - name: RUNNER_DISABLE_UPDATE
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: RUNNER_DISABLE_UPDATE
+        - name: HTTP_PROXY
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: HTTP_PROXY
+        - name: HTTPS_PROXY
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: HTTPS_PROXY
+        - name: NO_PROXY
+          valueFrom:
+            configMapKeyRef:
+              name: github-runner-config-updated
+              key: NO_PROXY
+        # Token需要重新生成后更新
+        - name: RUNNER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-runner-secret
+              key: RUNNER_TOKEN
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-runner-secret
+              key: GITHUB_TOKEN
+        - name: DOCKER_HOST
+          value: unix:///var/run/docker.sock
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: "2"
+            memory: 4Gi
+
+        volumeMounts:
+        # 持久化Runner状态
+        - name: runner-state
+          mountPath: /runner
+        # 工作目录
+        - name: workdir
+          mountPath: /tmp/github-runner-workdir
+        # Docker socket
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        # Docker lib
+        - name: docker-lib
+          mountPath: /var/lib/docker
+
+        # 启动脚本 - 实现状态检查和自动重用
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+          echo '🚀 GitHub Runner 启动脚本'
+          echo '==========================================='
+
+          # 设置工作目录
+          cd /runner
+          mkdir -p /runner/_work
+
+          # 检查是否已注册
+          if [ -f '.runner' ] && [ -f '.credentials' ]; then
+            echo '✅ 发现现有Runner配置，跳过注册'
+            echo '📋 Runner状态：'
+            ls -la /runner/
+            echo ''
+          else
+            echo '🔧 首次启动或状态丢失，开始注册...'
+
+            # 验证必要的环境变量
+            if [ -z "${RUNNER_TOKEN}" ] || [ -z "${REPO_URL}" ]; then
+              echo '❌ 错误：RUNNER_TOKEN 或 REPO_URL 环境变量未设置'
+              echo "RUNNER_TOKEN: ${RUNNER_TOKEN}"
+              echo "REPO_URL: ${REPO_URL}"
+              exit 1
+            fi
+
+            echo "🔗 注册Runner到：${REPO_URL}"
+            echo "🏷️  标签：${RUNNER_LABELS}"
+            echo "📦 工作目录：${RUNNER_WORKDIR}"
+
+            # 执行注册
+            ./config.sh \
+              --url "${REPO_URL}" \
+              --token "${RUNNER_TOKEN}" \
+              --name "${RUNNER_NAME}" \
+              --labels "${RUNNER_LABELS}" \
+              --work "${RUNNER_WORKDIR}" \
+              --unattended \
+              --ephemeral "${RUNNER_EPHEMERAL}"
+
+            echo '✅ Runner注册完成'
+          fi
+
+          echo '▶️  启动Runner服务...'
+          ./run.sh
+
+        # 健康检查
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "pgrep -f 'Runner.Listener' > /dev/null || exit 1"
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "pgrep -f 'Runner.Listener' > /dev/null || exit 1"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+      volumes:
+      # 持久化存储 - 保存Runner状态
+      - name: runner-state
+        persistentVolumeClaim:
+          claimName: github-runner-state-pvc
+      # 工作目录
+      - name: workdir
+        emptyDir:
+          sizeLimit: 10Gi
+      # Docker socket
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+      # Docker lib
+      - name: docker-lib
+        hostPath:
+          path: /var/lib/docker
+          type: Directory
+
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 60

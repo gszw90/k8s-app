@@ -1,16 +1,45 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"os"
 	"runtime"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 )
+
+type Config struct {
+	Name string `yaml:"name"`
+	Mode string `yaml:"mode"`
+}
+
+var config Config
+var c string
+
+func init() {
+	// get config file from cli args
+	flag.StringVar(&c, "c", "config/config.yaml", "config file")
+	flag.Parse()
+
+	contents, err := os.ReadFile(c)
+	if err != nil {
+		panic(err)
+	}
+
+	err = yaml.Unmarshal(contents, &config)
+	if err != nil {
+		panic(err)
+	}
+}
 
 func main() {
 	// Initialize the game
 	fmt.Println(runtime.GOOS, runtime.GOARCH)
+	fmt.Println("app name:", config.Name)
+	fmt.Println("app mode:", config.Mode)
 	startServer()
 }
 
