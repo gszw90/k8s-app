@@ -49,17 +49,45 @@ list_apps_envs() {
     for app in "${APPS[@]}"; do
         echo "🔧 $app:"
         for env in "${ENVIRONMENTS[@]}"; do
-            config_file="backend/app/${app}/config/config-${env}.yaml"
+            config_file=$(get_config_info "$app" "$env")
             dockerfile="deploy/docker/${app}/Dockerfile"
 
             if [[ -f "$config_file" ]] && [[ -f "$dockerfile" ]]; then
                 echo "  ✅ $env (配置文件: $config_file)"
             else
                 echo "  ❌ $env (缺少配置文件或Dockerfile)"
+                if [[ -z "$config_file" ]]; then
+                    echo "    原因: 无法确定配置文件路径"
+                elif [[ ! -f "$config_file" ]]; then
+                    echo "    原因: 配置文件不存在 ($config_file)"
+                elif [[ ! -f "$dockerfile" ]]; then
+                    echo "    原因: Dockerfile不存在 ($dockerfile)"
+                fi
             fi
         done
         echo ""
     done
+}
+
+# 获取应用的配置文件路径和格式
+get_config_info() {
+    local app=$1
+    local env=$2
+
+    case "$app" in
+        "first-app")
+            echo "backend/app/first_app/config/config-${env}.yaml"
+            ;;
+        "second-app")
+            echo "backend/app/second_app/config/config-${env}.yaml"
+            ;;
+        "web-app")
+            echo "frontend/first_app/config/config-${env}.json"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
 }
 
 # 检查应用和环境是否存在
@@ -81,10 +109,18 @@ check_app_env() {
         exit 1
     fi
 
-    # 检查配置文件是否存在
-    local config_file="backend/app/${app}/config/config-${env}.yaml"
+    # 智能检测配置文件路径
+    local config_file
+    config_file=$(get_config_info "$app" "$env")
+
+    if [[ -z "$config_file" ]]; then
+        echo -e "${RED}❌ 错误: 无法确定应用 '$app' 的配置文件路径${NC}"
+        exit 1
+    fi
+
     if [[ ! -f "$config_file" ]]; then
         echo -e "${RED}❌ 错误: 配置文件不存在: $config_file${NC}"
+        echo -e "${YELLOW}应用 '$app' 的环境 '$env' 配置文件应为: $config_file${NC}"
         exit 1
     fi
 
@@ -94,6 +130,8 @@ check_app_env() {
         echo -e "${RED}❌ 错误: Dockerfile不存在: $dockerfile${NC}"
         exit 1
     fi
+
+    echo -e "${GREEN}✅ 配置验证通过: $config_file${NC}"
 }
 
 # 构建单个镜像
@@ -118,9 +156,13 @@ build_image() {
     local image_name="${app}:${image_tag}"
     local latest_name="${app}:latest-${env}"
 
+    # 获取配置文件路径用于显示
+    local config_file
+    config_file=$(get_config_info "$app" "$env")
+
     echo -e "${BLUE}🔨 开始构建镜像: $app ($env)${NC}"
     echo -e "${BLUE}📁 Dockerfile: deploy/docker/${app}/Dockerfile${NC}"
-    echo -e "${BLUE}⚙️  配置文件: backend/app/${app}/config/config-${env}.yaml${NC}"
+    echo -e "${BLUE}⚙️  配置文件: $config_file${NC}"
     echo -e "${BLUE}🏷️  镜像标签: $image_name${NC}"
     echo ""
 
@@ -164,16 +206,17 @@ build_all() {
     local total=0
     local success=0
     local failed=0
+    local skipped=0
 
     for app in "${APPS[@]}"; do
         for env in "${ENVIRONMENTS[@]}"; do
             ((total++))
 
-            config_file="backend/app/${app}/config/config-${env}.yaml"
+            config_file=$(get_config_info "$app" "$env")
             dockerfile="deploy/docker/${app}/Dockerfile"
 
             if [[ -f "$config_file" ]] && [[ -f "$dockerfile" ]]; then
-                echo -e "${YELLOW}[$total/$((total + ${#APPS[@]} * ${#ENVIRONMENTS[@]} - total))] 构建: $app ($env)${NC}"
+                echo -e "${YELLOW}[$total/${#APPS[@]} * ${#ENVIRONMENTS[@]}] 构建: $app ($env)${NC}"
 
                 if build_image "$app" "$env"; then
                     ((success++))
@@ -183,6 +226,14 @@ build_all() {
                 echo ""
             else
                 echo -e "${YELLOW}⚠️  跳过: $app ($env) - 缺少配置文件或Dockerfile${NC}"
+                if [[ -z "$config_file" ]]; then
+                    echo "    原因: 无法确定配置文件路径"
+                elif [[ ! -f "$config_file" ]]; then
+                    echo "    原因: 配置文件不存在 ($config_file)"
+                elif [[ ! -f "$dockerfile" ]]; then
+                    echo "    原因: Dockerfile不存在 ($dockerfile)"
+                fi
+                ((skipped++))
                 echo ""
             fi
         done
@@ -192,7 +243,7 @@ build_all() {
     echo -e "${GREEN}📈 构建总结:${NC}"
     echo -e "${GREEN}  ✅ 成功: $success${NC}"
     echo -e "${RED}  ❌ 失败: $failed${NC}"
-    echo -e "${YELLOW}  ⚠️  跳过: $((total - success - failed))${NC}"
+    echo -e "${YELLOW}  ⚠️  跳过: $skipped${NC}"
 
     if [[ $failed -gt 0 ]]; then
         exit 1
