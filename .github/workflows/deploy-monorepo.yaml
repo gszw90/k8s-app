@@ -385,9 +385,39 @@ jobs:
             echo "✅ 外部KUBECONFIG设置完成"
           else
             echo "🔧 使用Docker Desktop Kubeconfig..."
-            # 使用Docker Desktop的kubeconfig文件路径
-            export KUBECONFIG="$HOME/.kube/config"
-            echo "✅ Docker Desktop Kubeconfig配置启用"
+
+            # 确保kubeconfig文件存在且可访问
+            mkdir -p ~/.kube
+
+            # 检查多个可能的kubeconfig位置
+            if [[ -f "/home/zeng/.kube/config" ]]; then
+              echo "📁 找到WSL用户kubeconfig: /home/zeng/.kube/config"
+              cp /home/zeng/.kube/config ~/.kube/config
+            elif [[ -f "/root/.kube/config" ]]; then
+              echo "📁 找到root用户kubeconfig: /root/.kube/config"
+              cp /root/.kube/config ~/.kube/config
+            else
+              echo "❌ 未找到kubeconfig文件，尝试创建默认配置..."
+              # 尝试从Docker Desktop直接获取配置
+              docker run --rm -v /:/host alpine sh -c 'cat /host/home/zeng/.kube/config 2>/dev/null || cat /host/root/.kube/config 2>/dev/null' > ~/.kube/config 2>/dev/null || echo "无法获取kubeconfig"
+            fi
+
+            # 验证kubeconfig文件内容
+            if [[ -f ~/.kube/config ]]; then
+              echo "✅ kubeconfig文件存在，大小: $(wc -c < ~/.kube/config) bytes"
+              echo "📋 kubeconfig内容预览:"
+              head -10 ~/.kube/config | grep -E "(server|cluster|context)" || echo "配置文件可能有问题"
+
+              export KUBECONFIG="$HOME/.kube/config"
+
+              # 强制使用正确的上下文
+              kubectl config use-context docker-desktop 2>/dev/null || echo "上下文设置失败，使用默认配置"
+            else
+              echo "❌ kubeconfig文件不存在，无法继续"
+              exit 1
+            fi
+
+            echo "✅ Docker Desktop Kubeconfig配置完成"
           fi
 
           # 检查并安装kubectl
