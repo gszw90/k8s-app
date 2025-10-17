@@ -34,6 +34,7 @@ data:
   # echo -n "your-password" | base64
   DB_PASSWORD: "${DB_PASSWORD}"
   API_KEY: "${API_KEY}"
+  SESSION_SECRET: "${SESSION_SECRET}"
 
 ---
 # Deployment - 应用部署配置
@@ -67,8 +68,8 @@ spec:
     spec:
       containers:
       - name: backend-first-app
-        image: ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
-        imagePullPolicy: Always
+        image: first-app:849f60a
+        imagePullPolicy: Never
         ports:
         - containerPort: 18080
           name: http
@@ -104,6 +105,11 @@ spec:
             secretKeyRef:
               name: backend-first-app-secret
               key: API_KEY
+        - name: SESSION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: backend-first-app-secret
+              key: SESSION_SECRET
         resources:
           requests:
             memory: "64Mi"
