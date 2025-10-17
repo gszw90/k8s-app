@@ -292,26 +292,33 @@ jobs:
             echo "🛠️ 使用统一构建脚本..."
             ./scripts/build-docker.sh "$APP_NAME" "$ENVIRONMENT" --tag "$IMAGE_TAG"
 
-            # 验证构建结果 - 修复标签匹配逻辑
+            # 验证构建结果 - 最终修复：验证实际构建的镜像
             echo "🔍 验证构建结果..."
-            echo "查找镜像: $IMAGE_NAME"
-            echo "期望标签: $IMAGE_TAG"
-            docker images | grep "$IMAGE_NAME" || echo "未找到匹配的镜像"
+            echo "应用名: $APP_NAME"
+            echo "环境: $ENVIRONMENT"
+            echo "标签: $IMAGE_TAG"
+            echo "构建脚本生成的镜像:"
+            docker images | grep "$APP_NAME" || echo "未找到 $APP_NAME 镜像"
 
-            # 构建脚本生成的镜像格式: $APP_NAME:$APP_NAME-$ENVIRONMENT-$COMMIT_SHORT
-            EXPECTED_TAG="${APP_NAME}-${ENVIRONMENT}-${COMMIT_SHORT}"
-            echo "预期完整标签: $EXPECTED_TAG"
+            # 验证两种标签：commit标签 和 latest-environment标签
+            COMMIT_TAG="${APP_NAME}:${IMAGE_TAG}"
+            LATEST_TAG="${APP_NAME}:latest-${ENVIRONMENT}"
 
-            if docker images | grep -q "$APP_NAME.*$EXPECTED_TAG"; then
+            echo "验证标签1: $COMMIT_TAG"
+            echo "验证标签2: $LATEST_TAG"
+
+            if docker images | grep -q "$APP_NAME.*$IMAGE_TAG" && docker images | grep -q "$APP_NAME.*latest-${ENVIRONMENT}"; then
               echo "image-tag=$FULL_IMAGE_TAG" >> $GITHUB_OUTPUT
               echo "build-success=true" >> $GITHUB_OUTPUT
-              echo "✅ 构建验证成功"
+              echo "✅ 构建验证成功 - 两个标签都存在"
             else
-              echo "❌ 构建验证失败"
+              echo "❌ 构建验证失败 - 标签缺失"
               echo "image-tag=build-failed" >> $GITHUB_OUTPUT
               echo "build-success=false" >> $GITHUB_OUTPUT
-              echo "🔍 调试信息:"
+              echo "🔍 详细调试:"
               docker images | grep "$APP_NAME" || echo "没有找到 $APP_NAME 相关镜像"
+              echo "检查标签: $IMAGE_TAG (期望在镜像中存在)"
+              echo "检查标签: latest-$ENVIRONMENT (期望在镜像中存在)"
             fi
           else
             echo "🐳 直接使用 Docker 命令构建..."
