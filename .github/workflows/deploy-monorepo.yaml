@@ -292,13 +292,26 @@ jobs:
             echo "🛠️ 使用统一构建脚本..."
             ./scripts/build-docker.sh "$APP_NAME" "$ENVIRONMENT" --tag "$IMAGE_TAG"
 
-            # 验证构建结果
-            if docker images | grep -q "$IMAGE_NAME.*$IMAGE_TAG"; then
+            # 验证构建结果 - 修复标签匹配逻辑
+            echo "🔍 验证构建结果..."
+            echo "查找镜像: $IMAGE_NAME"
+            echo "期望标签: $IMAGE_TAG"
+            docker images | grep "$IMAGE_NAME" || echo "未找到匹配的镜像"
+
+            # 构建脚本生成的镜像格式: $APP_NAME:$APP_NAME-$ENVIRONMENT-$COMMIT_SHORT
+            EXPECTED_TAG="${APP_NAME}-${ENVIRONMENT}-${COMMIT_SHORT}"
+            echo "预期完整标签: $EXPECTED_TAG"
+
+            if docker images | grep -q "$APP_NAME.*$EXPECTED_TAG"; then
               echo "image-tag=$FULL_IMAGE_TAG" >> $GITHUB_OUTPUT
               echo "build-success=true" >> $GITHUB_OUTPUT
+              echo "✅ 构建验证成功"
             else
+              echo "❌ 构建验证失败"
               echo "image-tag=build-failed" >> $GITHUB_OUTPUT
               echo "build-success=false" >> $GITHUB_OUTPUT
+              echo "🔍 调试信息:"
+              docker images | grep "$APP_NAME" || echo "没有找到 $APP_NAME 相关镜像"
             fi
           else
             echo "🐳 直接使用 Docker 命令构建..."
