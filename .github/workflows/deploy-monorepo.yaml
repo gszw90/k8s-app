@@ -376,17 +376,18 @@ jobs:
           echo "命名空间: $NAMESPACE"
           echo "镜像标签: $IMAGE_TAG"
 
-          # 设置KUBECONFIG
+          # 使用In-Cluster配置（GitHub runner运行在K8s集群内）
           if [[ -n "$KUBE_CONFIG_DATA" ]]; then
-            echo "🔧 设置KUBECONFIG..."
+            echo "🔧 使用外部KUBECONFIG..."
             mkdir -p ~/.kube
             echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
             export KUBECONFIG="$HOME/.kube/config"
-            echo "✅ KUBECONFIG设置完成"
+            echo "✅ 外部KUBECONFIG设置完成"
           else
-            echo "⚠️ 警告: 未设置KUBE_CONFIG_DATA secret"
-            echo "🔧 尝试使用默认配置..."
-            export KUBECONFIG="$HOME/.kube/config"
+            echo "🔧 使用In-Cluster配置..."
+            # GitHub runner运行在集群内，使用in-cluster配置
+            export KUBECONFIG=""
+            echo "✅ In-Cluster配置启用"
           fi
 
           # 检查并安装kubectl
