@@ -368,9 +368,11 @@ jobs:
           kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
           # 选择对应的 K8s 配置文件
-          K8S_CONFIG="k8s/${DOMAIN}-${APP_NAME}.yaml"
+          K8S_CONFIG="deploy/k8s/${DOMAIN}-${APP_NAME}.yaml"
           if [ ! -f "$K8S_CONFIG" ]; then
             echo "❌ K8s 配置文件不存在: $K8S_CONFIG"
+            echo "📂 可用的K8s配置文件:"
+            ls -la deploy/k8s/ || echo "deploy/k8s/ 目录不存在"
             echo "deployment-success=false" >> $GITHUB_OUTPUT
             exit 1
           fi
