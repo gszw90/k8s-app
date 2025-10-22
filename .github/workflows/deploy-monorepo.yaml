@@ -376,48 +376,47 @@ jobs:
           echo "命名空间: $NAMESPACE"
           echo "镜像标签: $IMAGE_TAG"
 
-          # 使用正确的kubeconfig配置（WSL环境下的Docker Desktop K8s）
+          # 加载系统环境变量（包括KUBECONFIG）
+          echo "🔧 加载系统环境变量..."
+          if [[ -f "/etc/profile" ]]; then
+            source /etc/profile
+            echo "✅ 已加载 /etc/profile"
+          fi
+
+          # 验证KUBECONFIG是否已设置
+          echo "🔍 验证环境变量..."
+          echo "KUBECONFIG: ${KUBECONFIG:-'未设置'}"
+
+          # 使用现有的KUBECONFIG环境变量配置
           if [[ -n "$KUBE_CONFIG_DATA" ]]; then
             echo "🔧 使用外部KUBECONFIG..."
             mkdir -p ~/.kube
             echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
             export KUBECONFIG="$HOME/.kube/config"
             echo "✅ 外部KUBECONFIG设置完成"
-          else
-            echo "🔧 使用Docker Desktop Kubeconfig..."
+          elif [[ -n "$KUBECONFIG" ]]; then
+            echo "🔧 使用现有KUBECONFIG环境变量: $KUBECONFIG"
 
-            # 确保kubeconfig文件存在且可访问
-            mkdir -p ~/.kube
+            # 验证配置文件是否存在且可访问
+            if [[ -f "$KUBECONFIG" ]]; then
+              echo "✅ kubeconfig文件存在，大小: $(wc -c < "$KUBECONFIG") bytes"
 
-            # 检查多个可能的kubeconfig位置
-            if [[ -f "/home/zeng/.kube/config" ]]; then
-              echo "📁 找到WSL用户kubeconfig: /home/zeng/.kube/config"
-              cp /home/zeng/.kube/config ~/.kube/config
-            elif [[ -f "/root/.kube/config" ]]; then
-              echo "📁 找到root用户kubeconfig: /root/.kube/config"
-              cp /root/.kube/config ~/.kube/config
+              # 验证服务器地址和上下文
+              SERVER_URL=$(grep "server:" "$KUBECONFIG" | awk '{print $2}')
+              CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null || echo "未知")
+
+              echo "🌐 服务器地址: $SERVER_URL"
+              echo "🎯 当前上下文: $CURRENT_CONTEXT"
+              echo "✅ KUBECONFIG环境变量配置完成"
             else
-              echo "❌ 未找到kubeconfig文件，尝试创建默认配置..."
-              # 尝试从Docker Desktop直接获取配置
-              docker run --rm -v /:/host alpine sh -c 'cat /host/home/zeng/.kube/config 2>/dev/null || cat /host/root/.kube/config 2>/dev/null' > ~/.kube/config 2>/dev/null || echo "无法获取kubeconfig"
-            fi
-
-            # 验证kubeconfig文件内容
-            if [[ -f ~/.kube/config ]]; then
-              echo "✅ kubeconfig文件存在，大小: $(wc -c < ~/.kube/config) bytes"
-              echo "📋 kubeconfig内容预览:"
-              head -10 ~/.kube/config | grep -E "(server|cluster|context)" || echo "配置文件可能有问题"
-
-              export KUBECONFIG="$HOME/.kube/config"
-
-              # 强制使用正确的上下文
-              kubectl config use-context docker-desktop 2>/dev/null || echo "上下文设置失败，使用默认配置"
-            else
-              echo "❌ kubeconfig文件不存在，无法继续"
+              echo "❌ KUBECONFIG指向的文件不存在: $KUBECONFIG"
               exit 1
             fi
-
-            echo "✅ Docker Desktop Kubeconfig配置完成"
+          else
+            echo "❌ 未设置KUBECONFIG环境变量"
+            echo "💡 请确保在系统profile中设置了KUBECONFIG"
+            echo "💡 或者在GitHub Actions Secret中添加KUBE_CONFIG_DATA"
+            exit 1
           fi
 
           # 检查并安装kubectl

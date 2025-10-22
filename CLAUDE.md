@@ -128,3 +128,10 @@ kubectl rollout restart deployment/github-runner-simple -n github-runners
 
 ## 任务/会话处理
 每次一个任务或者一个会话完成后，总结当前任务或者会话，合并到CLUADE.md中，并保存到历史文档中，过程中产生的文件也需要合并与总结。
+
+## GitHub Actions K8s连接修复 (2025-10-22)
+**问题**: GitHub Actions自动部署在deploy阶段K8s连接失败
+**根因**: 脚本未正确加载系统profile中的KUBECONFIG环境变量
+**解决**: 修改部署脚本直接使用现有KUBECONFIG=/home/zeng/.kube/config
+**验证**: 创建测试脚本 `scripts/test-k8s-connection.sh` 验证修复有效
+**文档**: 详细记录在 `docs/2025-10-22_github-actions-k8s-fix.md`
