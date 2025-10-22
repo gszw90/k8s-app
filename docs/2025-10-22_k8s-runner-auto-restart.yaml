@@ -1,0 +1,215 @@
+# GitHub Runner K8s原生自愈部署配置
+# 确保K8s重启后自动启动Runner
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-runner-simple
+  namespace: github-runners
+  labels:
+    app: github-runner
+    component: simple
+  annotations:
+    # 添加部署注释说明自愈能力
+    description: "GitHub Runner with K8s native self-healing capabilities"
+spec:
+  # 确保始终有1个副本运行
+  replicas: 1
+
+  # 部署策略 - Recreate确保完全重启
+  strategy:
+    type: Recreate  # 比RollingUpdate更适合单副本服务
+    recreateParams:
+      timeoutSeconds: 600
+
+  # 选择器
+  selector:
+    matchLabels:
+      app: github-runner
+      component: simple
+
+  # Pod模板
+  template:
+    metadata:
+      labels:
+        app: github-runner
+        component: simple
+      annotations:
+        # 记录重启时间
+        kubectl.kubernetes.io/restarted-at: "{{ now | date \"2006-01-02T15:04:05Z07:00\" }}"
+        # 添加Pod注释
+        description: "Self-healing GitHub Runner Pod"
+
+    spec:
+      # 服务账户
+      serviceAccountName: github-runner-sa
+
+      # 重启策略 - 容器级别
+      restartPolicy: Always
+
+      # 终止宽限期
+      terminationGracePeriodSeconds: 60
+
+      # 安全上下文
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
+
+      # 容器配置
+      containers:
+      - name: github-runner
+        image: myoung34/github-runner:latest
+        imagePullPolicy: IfNotPresent
+
+        # 环境变量
+        envFrom:
+        - configMapRef:
+            name: github-runner-config-updated
+        - secretRef:
+            name: github-runner-secret
+
+        # 额外的环境变量确保自愈
+        env:
+        - name: RUNNER_EPHEMERAL
+          value: "false"  # 保持持久化
+        - name: RUNNER_DISABLE_UPDATE
+          value: "false"  # 允许自动更新
+        - name: RUNNER_MAX_RETRY
+          value: "5"      # 增加重试次数
+        - name: DOCKER_HOST
+          value: unix:///var/run/docker.sock
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+
+        # 资源配置
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2
+            memory: 4Gi
+
+        # 健康检查 - 增强版
+        startupProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pgrep -f 'Runner.Listener' > /dev/null || exit 1
+          initialDelaySeconds: 30   # 启动后30秒开始检查
+          periodSeconds: 10          # 每10秒检查一次
+          timeoutSeconds: 5          # 5秒超时
+          failureThreshold: 30       # 5分钟内失败则重启
+          successThreshold: 1
+
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pgrep -f 'Runner.Listener' > /dev/null || exit 1
+          initialDelaySeconds: 120  # 启动后2分钟开始检查
+          periodSeconds: 30          # 每30秒检查一次
+          timeoutSeconds: 10         # 10秒超时
+          failureThreshold: 5        # 连续5次失败重启
+          successThreshold: 1
+
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pgrep -f 'Runner.Listener' > /dev/null || exit 1
+          initialDelaySeconds: 60   # 启动后1分钟开始检查
+          periodSeconds: 10          # 每10秒检查一次
+          timeoutSeconds: 5          # 5秒超时
+          failureThreshold: 3        # 连续3次失败标记为未就绪
+          successThreshold: 1
+
+        # 存储挂载
+        volumeMounts:
+        - name: runner-state
+          mountPath: /tmp/github-runner-workdir
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        - name: docker-lib
+          mountPath: /var/lib/docker
+
+      # 存储卷
+      volumes:
+      - name: runner-state
+        persistentVolumeClaim:
+          claimName: github-runner-state-pvc
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+      - name: docker-lib
+        hostPath:
+          path: /var/lib/docker
+          type: Directory
+
+---
+# 确保PVC配置正确
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: github-runner-state-pvc
+  namespace: github-runners
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: hostpath
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# ConfigMap配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: github-runner-config-updated
+  namespace: github-runners
+  labels:
+    app: github-runner
+    component: config
+data:
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""
+  NO_PROXY: "localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+  REPO_URL: "https://github.com/gszw90/k8s-app"
+  RUNNER_DEBUG: "false"
+  RUNNER_DISABLE_UPDATE: "false"
+  RUNNER_ENTERPRISE: ""
+  RUNNER_EPHEMERAL: "false"
+  RUNNER_GROUP: "default"
+  RUNNER_LABELS: "self-hosted,k8s,local,auto-restart"
+  RUNNER_LOG_LEVEL: "info"
+  RUNNER_MAX_RETRY: "5"
+  RUNNER_NAME: "k8s-runner-auto"
+  RUNNER_NO_RETRY_INTERVAL: "30"
+  RUNNER_ORG: ""
+  RUNNER_REPO: "gszw90/k8s-app"
+  RUNNER_WORKDIR: "/tmp/github-runner-workdir"
+
+---
+# ServiceAccount配置
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-runner-sa
+  namespace: github-runners
+  annotations:
+    description: "Service account for GitHub Runner with self-healing"
+
+---
+# 确保命名空间存在
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: github-runners
+  annotations:
+    description: "Namespace for GitHub Runner with auto-restart capabilities"
