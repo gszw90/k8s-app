@@ -1,0 +1,127 @@
+# GitHub Runner ServiceAccount 和 RBAC 配置
+# 解决GitHub Actions在K8s中的权限问题
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-runner-actions-sa
+  namespace: github-runners
+  labels:
+    app: github-runner
+    component: service-account
+    purpose: actions-auth
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: github-runner-actions-role
+  labels:
+    app: github-runner
+    component: cluster-role
+    purpose: actions-deploy
+rules:
+  # 基础权限
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # 应用部署权限
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "secrets", "events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # 网络权限
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # 存储权限
+  - apiGroups: [""]
+    resources: ["persistentvolumes", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+
+  # 集群信息权限
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+
+  # 自定义资源权限
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+
+  # 健康检查权限
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: github-runner-actions-binding
+  labels:
+    app: github-runner
+    component: cluster-role-binding
+    purpose: actions-deploy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: github-runner-actions-role
+subjects:
+- kind: ServiceAccount
+  name: github-runner-actions-sa
+  namespace: github-runners
+
+---
+# 专用于应用部署的Role（限制在特定namespace）
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-deployer-role
+  namespace: app-develop  # 可以根据需要创建多个环境的role
+  labels:
+    app: github-runner
+    component: role
+    purpose: app-deployment
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "secrets", "events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-develop-deployer-binding
+  namespace: app-develop
+  labels:
+    app: github-runner
+    component: role-binding
+    purpose: app-deployment
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: app-deployer-role
+subjects:
+- kind: ServiceAccount
+  name: github-runner-actions-sa
+  namespace: github-runners

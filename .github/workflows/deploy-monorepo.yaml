@@ -376,46 +376,75 @@ jobs:
           echo "命名空间: $NAMESPACE"
           echo "镜像标签: $IMAGE_TAG"
 
-          # 加载系统环境变量（包括KUBECONFIG）
-          echo "🔧 加载系统环境变量..."
-          if [[ -f "/etc/profile" ]]; then
-            source /etc/profile
-            echo "✅ 已加载 /etc/profile"
-          fi
+          # 直接设置KUBECONFIG环境变量（兼容多种环境）
+          echo "🔧 配置KUBECONFIG环境变量..."
 
-          # 验证KUBECONFIG是否已设置
-          echo "🔍 验证环境变量..."
-          echo "KUBECONFIG: ${KUBECONFIG:-'未设置'}"
-
-          # 使用现有的KUBECONFIG环境变量配置
           if [[ -n "$KUBE_CONFIG_DATA" ]]; then
             echo "🔧 使用外部KUBECONFIG..."
             mkdir -p ~/.kube
             echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
             export KUBECONFIG="$HOME/.kube/config"
-            echo "✅ 外部KUBECONFIG设置完成"
-          elif [[ -n "$KUBECONFIG" ]]; then
-            echo "🔧 使用现有KUBECONFIG环境变量: $KUBECONFIG"
-
-            # 验证配置文件是否存在且可访问
-            if [[ -f "$KUBECONFIG" ]]; then
-              echo "✅ kubeconfig文件存在，大小: $(wc -c < "$KUBECONFIG") bytes"
-
-              # 验证服务器地址和上下文
-              SERVER_URL=$(grep "server:" "$KUBECONFIG" | awk '{print $2}')
-              CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null || echo "未知")
-
-              echo "🌐 服务器地址: $SERVER_URL"
-              echo "🎯 当前上下文: $CURRENT_CONTEXT"
-              echo "✅ KUBECONFIG环境变量配置完成"
-            else
-              echo "❌ KUBECONFIG指向的文件不存在: $KUBECONFIG"
-              exit 1
-            fi
+            echo "✅ 外部KUBECONFIG设置完成: $KUBECONFIG"
           else
-            echo "❌ 未设置KUBECONFIG环境变量"
-            echo "💡 请确保在系统profile中设置了KUBECONFIG"
-            echo "💡 或者在GitHub Actions Secret中添加KUBE_CONFIG_DATA"
+            # 尝试多种方式设置KUBECONFIG
+            CURRENT_USER=$(whoami)
+            echo "🔍 当前用户: $CURRENT_USER"
+
+            # 方法1: 直接设置已知路径
+            if [[ -f "/home/zeng/.kube/config" ]]; then
+              export KUBECONFIG="/home/zeng/.kube/config"
+              echo "✅ 方法1成功: 设置KUBECONFIG=$KUBECONFIG"
+            # 方法2: 当前用户home目录
+            elif [[ -f "$HOME/.kube/config" ]]; then
+              export KUBECONFIG="$HOME/.kube/config"
+              echo "✅ 方法2成功: 设置KUBECONFIG=$KUBECONFIG"
+            # 方法3: root用户目录
+            elif [[ -f "/root/.kube/config" ]]; then
+              export KUBECONFIG="/root/.kube/config"
+              echo "✅ 方法3成功: 设置KUBECONFIG=$KUBECONFIG"
+            # 方法4: 加载profile再检查
+            else
+              echo "🔧 尝试加载profile..."
+              if [[ -f "/etc/profile" ]]; then
+                # 使用bash -l来加载login profile
+                bash -l -c 'source /etc/profile && echo $KUBECONFIG' > /tmp/kubeconfig_path 2>/dev/null
+                if [[ -f "/tmp/kubeconfig_path" ]] && [[ -s "/tmp/kubeconfig_path" ]]; then
+                  export KUBECONFIG=$(cat /tmp/kubeconfig_path)
+                  echo "✅ 方法4成功: 通过profile加载KUBECONFIG=$KUBECONFIG"
+                else
+                  echo "❌ 所有方法都失败了"
+                  echo "🔍 调试信息:"
+                  echo "  HOME: $HOME"
+                  echo "  当前用户: $(whoami)"
+                  echo "  检查文件存在性:"
+                  ls -la /home/zeng/.kube/config 2>/dev/null || echo "    /home/zeng/.kube/config 不存在"
+                  ls -la $HOME/.kube/config 2>/dev/null || echo "    $HOME/.kube/config 不存在"
+                  ls -la /root/.kube/config 2>/dev/null || echo "    /root/.kube/config 不存在"
+                  exit 1
+                fi
+              else
+                echo "❌ /etc/profile文件不存在"
+                exit 1
+              fi
+            fi
+          fi
+
+          # 验证KUBECONFIG设置结果
+          echo "🔍 验证KUBECONFIG设置结果..."
+          echo "KUBECONFIG: ${KUBECONFIG:-'未设置'}"
+
+          if [[ -n "$KUBECONFIG" ]] && [[ -f "$KUBECONFIG" ]]; then
+            echo "✅ kubeconfig文件存在，大小: $(wc -c < "$KUBECONFIG") bytes"
+
+            # 验证服务器地址和上下文
+            SERVER_URL=$(grep "server:" "$KUBECONFIG" | awk '{print $2}')
+            CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null || echo "未知")
+
+            echo "🌐 服务器地址: $SERVER_URL"
+            echo "🎯 当前上下文: $CURRENT_CONTEXT"
+            echo "✅ KUBECONFIG配置验证完成"
+          else
+            echo "❌ KUBECONFIG配置失败"
             exit 1
           fi
 

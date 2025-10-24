@@ -129,9 +129,53 @@ kubectl rollout restart deployment/github-runner-simple -n github-runners
 ## 任务/会话处理
 每次一个任务或者一个会话完成后，总结当前任务或者会话，合并到CLUADE.md中，并保存到历史文档中，过程中产生的文件也需要合并与总结。
 
-## GitHub Actions K8s连接修复 (2025-10-22)
+## GitHub Actions K8s连接问题 (2025-10-22)
 **问题**: GitHub Actions自动部署在deploy阶段K8s连接失败
-**根因**: 脚本未正确加载系统profile中的KUBECONFIG环境变量
-**解决**: 修改部署脚本直接使用现有KUBECONFIG=/home/zeng/.kube/config
-**验证**: 创建测试脚本 `scripts/test-k8s-connection.sh` 验证修复有效
-**文档**: 详细记录在 `docs/2025-10-22_github-actions-k8s-fix.md`
+**状态**: ❌ **未解决** - 临时解决方案已准备
+**根因**: GitHub Actions运行在隔离环境中，无法访问本地kubeconfig文件
+**尝试方案**:
+- 方案1: 加载/etc/profile (失败 - 非登录shell)
+- 方案2: 多方法配置策略 (本地测试✅，GitHub Actions❌)
+**临时解决方案**: 使用GitHub Actions Secrets存储kubeconfig (见 `docs/2025-10-22_temp-solution-kubeconfig-secret.md`)
+**文档**:
+- 详细记录: `docs/2025-10-22_github-actions-k8s-unresolved.md`
+- 修复过程: `docs/2025-10-22_github-actions-k8s-fix.md`
+- 临时方案: `docs/2025-10-22_temp-solution-kubeconfig-secret.md`
+
+## 配置数据
+- 在当前仓库安装的github app配置如下
+```yaml
+AppName: runner-ci-cd
+AppId: 2168366
+ClientId: Iv23lizdOiISiUHCD7of
+InstationId: 91349326 
+GithubAppPrivateKey: |
+-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEAyqpY5aMjHgVXZD5ELl8nhIrK1tH7b95rjLAQVQaYnA1UnlCi
++7n6CbNvfkFgrvR012LyyJd+lTwi2D6ZkL5s1fhlAqnwrnLNBq9huZXjnCXKExY1
+YUNsx7qfnsHd1gOBFm0OpurkWMVnnAS3VJEdUkIERoz/jgl7LHaptbl9ZVFhL9uF
+KQlwBRfx15eWB6+Til9gq7pCKCaY2xejoHzpegRYgtrYMOy5wBLFcLXddvLMDdeN
+y1xIrcXYWcYGRlADLyeoMJLJ/4NmCwlbTQ7/y80QnF63l8gPlbtHATHcg+Ef/8aF
+C80OTDZ8bqbD/EExlQO23AB3zWf5ZPq52cE7+QIDAQABAoIBAGQfPiXMr5ewOdlr
+LZHfLo27Z7QzLs24i1eIz7jBtnk52LkRy0MjQNS0EfvE3rfwSxzxZFIXDdE6UViV
+rJYmjWwz9+sV+7KjQojv8g6Wb0kAHlHJoft4LPCLUTpEOoz1VDu5CwkJeGAmviYE
+6nFb86lkteoI1GPeaTyxLux5Q+reJUQjg+ZQiU17n1dnYJzlumT9kcy4D9K/erek
++x++VjCuamYOtAPm/4TDh5X6qrFMlnPzTm1L1OJha2ZowE6giNNhSW1MW7OtUgEA
+HLpdvKcw2fmKMzwoidwLHL5913EieAKecPOH80q7xIWc3jjmQU1BHgGhyylfj9bv
+t6qAuwECgYEA6t6sz0dr80p8p+wuevWK0VuiY2HZYGIQ0qB0kapUj5OQR7+BMZak
+PaibWi4DfS6bZcuoyWA6AdwBJ6/pFfxDzcbbeEuB0Gqqi40Rhvr4wqbkAk13UkSb
+0H2bjOHmDkqYefPva94ZKQcT7bN+9CmakQ6/RrQYth7jlQFqWubiASECgYEA3OX3
+o5QLqg0DKZKMOEzhgCWVF9ZmaJI6xEx+N9p0z5fvACGZWQgd916EXBdXbyPLMnrw
+n9Yuwpdt3+iGC2wsxfoVSpdyTOE6IER39D6l7gloB9hg/TRms57phPWxjSiTy014
+rZ0uoIfKC9iU63F83pDDqkXv5PPs92enwSx6Z9kCgYEAwYnEdPmxpsVWezlQA9qa
+DXKpGaPj8Fxe6HF4HSByle1PExBncWlk5bouad1I2rqxKuzrpSU6J5YXDZETTR6W
+8NZQu4vc6NU8u8n/C2971UqY0JztGkmW6/LVXv43CMfHZZbxT72wlfJTJainkKNH
+zwiL7cMyKcDCYGLONSHUUoECgYBPw9a9QatIl3RJ4boyZkiTTn7c4bWPEyaXVYvK
+PV8qyxEpefh2tsCjX4TqAB+5aTJpow0ammu+JpItZThqDYDJaHmhurgyXK3xkufB
+0ZF3N/xRwOec5vwi5kIqmdGoSDu+ENZ/0p9QplfmGSoFLrDJaXrOFH0Arrglyk9A
+KQB2WQKBgQCgTbnDNEL78cRy1ZSRQcGEXyIATrrAPYDp6axbHiHvfuAspzpGnQMu
+weReRBR4VPglRFm2U293FYJrBSCoCDjE25NtMPAAWkEpDWOakWjzz2x4rGlVOrk9
+92+OX2q2WPU97b7TXSy2zeCeeM5sK1DeWkJCy3DvWcNILTJbMCCqKA==
+-----END RSA PRIVATE KEY-----
+
+```

@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: runner-token-updater
+  namespace: github-runners
+spec:
+  schedule: "0 */2 * * *"  # 每2小时执行一次
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: token-updater
+            image: alpine:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              # 安装必要工具
+              apk add --no-cache curl jq openssl bash
+
+              # 等待脚本文件挂载
+              sleep 5
+
+              # 执行token更新
+              cd /scripts
+              chmod +x auto-update-runner-token.sh
+              ./auto-update-runner-token.sh --restart
+            env:
+            - name: APP_ID
+              value: "2168366"
+            - name: INSTALLATION_ID
+              value: "91349326"
+            - name: REPO
+              value: "gszw90/k8s-app"
+            - name: NAMESPACE
+              value: "github-runners"
+            - name: SECRET_NAME
+              value: "github-runner-secret"
+            - name: DEPLOYMENT_NAME
+              value: "github-runner-simple"
+            volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: private-key
+              mountPath: /keys
+              readOnly: true
+          volumes:
+          - name: scripts
+            configMap:
+              name: runner-scripts
+          - name: private-key
+            secret:
+              secretName: github-app-private-key
+          restartPolicy: OnFailure
+          backoffLimit: 3

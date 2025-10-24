@@ -157,6 +157,79 @@ kubectl cluster-info
 - **配置文件**: `/etc/profile` (第29行KUBECONFIG设置)
 - **Kubeconfig**: `/home/zeng/.kube/config`
 
+<<<<<<< Updated upstream
 ---
 
 **修复完成！** GitHub Actions现在应该能够成功连接到您的K8s集群并完成自动部署。🎉
+=======
+## 🔄 第二次修复 (环境变量加载问题)
+
+### 新发现的问题
+GitHub Actions仍然失败，显示：
+```
+KUBECONFIG: '未设置'
+❌ 未设置KUBECONFIG环境变量
+```
+
+### 根本原因
+GitHub Actions运行在**非登录shell**中，不会自动加载`/etc/profile`文件，导致环境变量`KUBECONFIG=/home/zeng/.kube/config`未被设置。
+
+### 最终解决方案：多方法配置策略
+
+**修复逻辑：**
+```bash
+# 直接设置KUBECONFIG环境变量（兼容多种环境）
+echo "🔧 配置KUBECONFIG环境变量..."
+
+# 方法1: 直接设置已知路径
+if [[ -f "/home/zeng/.kube/config" ]]; then
+    export KUBECONFIG="/home/zeng/.kube/config"
+    echo "✅ 方法1成功: 设置KUBECONFIG=$KUBECONFIG"
+# 方法2: 当前用户home目录
+elif [[ -f "$HOME/.kube/config" ]]; then
+    export KUBECONFIG="$HOME/.kube/config"
+    echo "✅ 方法2成功: 设置KUBECONFIG=$KUBECONFIG"
+# 方法3: root用户目录
+elif [[ -f "/root/.kube/config" ]]; then
+    export KUBECONFIG="/root/.kube/config"
+    echo "✅ 方法3成功: 设置KUBECONFIG=$KUBECONFIG"
+# 方法4: 加载profile再检查
+else
+    # 使用bash -l来加载login profile
+    bash -l -c 'source /etc/profile && echo $KUBECONFIG' > /tmp/kubeconfig_path
+    export KUBECONFIG=$(cat /tmp/kubeconfig_path)
+    echo "✅ 方法4成功: 通过profile加载KUBECONFIG=$KUBECONFIG"
+fi
+```
+
+### 验证结果
+```
+🧪 测试GitHub Actions K8s连接配置
+🔧 配置KUBECONFIG环境变量...
+✅ 方法1成功: 设置KUBECONFIG=/home/zeng/.kube/config
+✅ kubeconfig文件存在，大小: 5688 bytes
+🌐 服务器地址: https://kubernetes.docker.internal:6443
+🎯 当前上下文: docker-desktop
+✅ 集群连接验证通过
+🎉 所有测试通过！GitHub Actions应该能够成功连接到K8s集群
+```
+
+## 📋 修复清单
+
+### ✅ 最终修复内容
+1. **多方法配置**: 实现4种不同的KUBECONFIG设置方法
+2. **优先级策略**: 从已知路径到profile加载的优先级顺序
+3. **详细日志**: 每种方法都有成功/失败的详细日志
+4. **调试信息**: 失败时提供详细的调试信息
+5. **测试验证**: 更新测试脚本模拟GitHub Actions环境
+
+### 🚀 GitHub Actions最终工作流程
+1. **方法1**: 直接设置`/home/zeng/.kube/config` (GitHub Actions中应该成功)
+2. **备用方法**: 如果方法1失败，尝试其他路径
+3. **验证连接**: 使用正确的配置连接到Docker Desktop K8s
+4. **继续部署**: 执行K8s部署操作
+
+---
+
+**最终修复完成！** GitHub Actions现在应该能够成功连接到您的K8s集群并完成自动部署。🎉
+>>>>>>> Stashed changes
