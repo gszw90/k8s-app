@@ -376,10 +376,41 @@ jobs:
           echo "命名空间: $NAMESPACE"
           echo "镜像标签: $IMAGE_TAG"
 
-          # 配置KUBECONFIG环境变量 - 优先使用in-cluster配置
-          echo "🔧 配置KUBECONFIG环境变量..."
+          # ⚡ 极简KUBECONFIG配置 - Pod内直连
+          echo "⚡ 配置Kubernetes环境 - Pod内直连优化"
 
-          # 优先级1: 使用GitHub Actions Secrets中的KUBE_CONFIG_DATA
+          # 创建最小化KUBECONFIG（Pod内通信最优）
+          mkdir -p ~/.kube
+          cat > ~/.kube/config << 'EOF'
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority: /run/secrets/kubernetes.io/serviceaccount/ca.crt
+    server: https://kubernetes.default.svc.cluster.local
+  name: cluster
+contexts:
+- context:
+    cluster: cluster
+    user: user
+  name: default
+current-context: default
+users:
+- name: user
+  user:
+    tokenFile: /run/secrets/kubernetes.io/serviceaccount/token
+EOF
+
+          export KUBECONFIG="$HOME/.kube/config"
+          export PATH="/opt/kubectl:$PATH"
+
+          # 快速验证
+          echo "⚡ KUBECONFIG: $KUBECONFIG"
+          if kubectl cluster-info --request-timeout=10s; then
+            echo "✅ Pod内Kubernetes连接成功"
+          else
+            echo "❌ Kubernetes连接失败"
+            exit 1
+          fi
           if [[ -n "$KUBE_CONFIG_DATA" ]]; then
             echo "🔧 使用GitHub Actions Secrets中的KUBECONFIG..."
             mkdir -p ~/.kube
