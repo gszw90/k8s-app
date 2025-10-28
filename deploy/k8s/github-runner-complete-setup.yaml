@@ -1,0 +1,485 @@
+# GitHub Runner Enhanced Complete Setup
+# 完整的Pod内Kubernetes通信方案部署清单
+
+# ============================================
+# 1. 高权限ServiceAccount和RBAC配置
+# ============================================
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-runner-admin
+  namespace: github-runners
+  labels:
+    app: github-runner-enhanced
+    role: admin
+    version: "2.0"
+    feature: in-cluster-k8s
+  annotations:
+    description: "GitHub Actions Runner with full cluster admin permissions for CI/CD deployment"
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: github-runner-admin-role
+  labels:
+    app: github-runner-enhanced
+    role: admin
+    version: "2.0"
+rules:
+# 核心命名空间权限
+- apiGroups: [""]
+  resources: ["namespaces", "pods", "services", "configmaps", "secrets", "persistentvolumeclaims", "events"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+# Apps权限（用于Deployments, StatefulSets等）
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "scale"]
+
+# 网络权限
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses", "networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+# 扩展API权限
+- apiGroups: ["extensions"]
+  resources: ["ingresses", "deployments"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+# Batch权限（用于Jobs, CronJobs）
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+# RBAC权限
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "escalate", "bind"]
+
+# 自定义资源权限
+- apiGroups: ["*"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: github-runner-admin-binding
+  labels:
+    app: github-runner-enhanced
+    role: admin
+    version: "2.0"
+subjects:
+- kind: ServiceAccount
+  name: github-runner-admin
+  namespace: github-runners
+roleRef:
+  kind: ClusterRole
+  name: github-runner-admin-role
+  apiGroup: rbac.authorization.k8s.io
+
+# ============================================
+# 2. 增强版GitHub Runner Deployment
+# ============================================
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-runner-enhanced
+  namespace: github-runners
+  labels:
+    app: github-runner-enhanced
+    version: "2.0"
+    feature: in-cluster-k8s
+  annotations:
+    description: "GitHub Actions Runner with in-cluster Kubernetes access"
+    version: "2.0 - Enhanced with kubectl and in-cluster config"
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: github-runner-enhanced
+
+  template:
+    metadata:
+      labels:
+        app: github-runner-enhanced
+        version: "2.0"
+        feature: in-cluster-k8s
+      annotations:
+        description: "GitHub Actions Runner Pod with full Kubernetes API access"
+
+    spec:
+      # 使用增强权限的ServiceAccount
+      serviceAccountName: github-runner-admin
+
+      # 容器配置
+      containers:
+      - name: github-runner
+        image: myoung34/github-runner:latest
+        env:
+        # GitHub配置
+        - name: REPO_URL
+          value: "https://github.com/gszw90/k8s-app"
+        - name: RUNNER_NAME
+          value: "github-runner-enhanced"
+        - name: RUNNER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-runner-secret
+              key: RUNNER_TOKEN
+        - name: RUNNER_GROUP
+          value: "default"
+
+        # Kubernetes配置
+        - name: KUBERNETES_IN_CLUSTER
+          value: "true"
+        - name: KUBECONFIG
+          value: "/home/runner/.kube/config"
+
+        # Docker配置
+        - name: DOCKER_HOST
+          value: "unix:///var/run/docker.sock"
+        - name: DOCKER_TLS_VERIFY
+          value: "0"
+
+        # 环境标识
+        - name: RUNNER_FEATURES
+          value: "kubectl,docker,in-cluster"
+        - name: RUNNER_VERSION
+          value: "2.0-enhanced"
+
+        # 资源限制
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+
+        # 卷挂载
+        volumeMounts:
+        # Docker socket
+        - name: docker-socket
+          mountPath: /var/run/docker.sock
+
+        # 工作目录
+        - name: runner-work
+          mountPath: /home/runner/_work
+
+        # 健康检查
+        livenessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        # 启动命令 - 增强版初始化
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -e
+          echo "🚀 启动GitHub Runner Enhanced (v2.0)..."
+
+          # 等待基础服务就绪
+          echo "⏳ 等待基础服务就绪..."
+          sleep 10
+
+          # 更新包管理器并安装工具
+          echo "📦 安装系统依赖..."
+          apt-get update -qq
+          apt-get install -y -qq curl gnupg2 ca-certificates apt-transport-https jq
+
+          # 下载并安装kubectl
+          echo "⬇️ 安装kubectl工具..."
+          KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+          curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+          # 验证kubectl安装
+          echo "✅ kubectl安装完成: $(kubectl version --client --short 2>/dev/null || echo 'version check failed')"
+
+          # 配置in-cluster kubeconfig
+          echo "⚙️ 配置in-cluster Kubernetes连接..."
+          mkdir -p /home/runner/.kube
+          cat > /home/runner/.kube/config << 'EOF'
+          apiVersion: v1
+          clusters:
+          - cluster:
+              certificate-authority: /run/secrets/kubernetes.io/serviceaccount/ca.crt
+              server: https://kubernetes.default.svc
+            name: in-cluster
+          contexts:
+          - context:
+              cluster: in-cluster
+              user: in-cluster-user
+            name: in-cluster
+          current-context: in-cluster
+          kind: Config
+          preferences: {}
+          users:
+          - name: in-cluster-user
+            user:
+              tokenFile: /run/secrets/kubernetes.io/serviceaccount/token
+          EOF
+
+          # 设置权限
+          chmod 600 /home/runner/.kube/config
+          chown -R runner:runner /home/runner/.kube
+
+          # 设置环境变量
+          export KUBECONFIG="/home/runner/.kube/config"
+          echo "export KUBECONFIG=\"/home/runner/.kube/config\"" >> /home/runner/.bashrc
+
+          # 验证Kubernetes连接
+          echo "🔍 验证Kubernetes连接..."
+          if kubectl cluster-info &> /dev/null; then
+            echo "✅ Kubernetes连接成功"
+          else
+            echo "❌ Kubernetes连接失败"
+            exit 1
+          fi
+
+          # 测试权限
+          echo "🔐 测试Kubernetes权限..."
+          if kubectl auth can-i create deployments --all-namespaces; then
+            echo "✅ 部署权限正常"
+          else
+            echo "⚠️  部署权限可能不足"
+          fi
+
+          # 创建实用脚本
+          echo "📝 创建实用脚本..."
+
+          # 连接测试脚本
+          cat > /home/runner/test-k8s.sh << 'EOF'
+          #!/bin/bash
+          echo "🔍 测试Kubernetes连接状态..."
+          export KUBECONFIG="/home/runner/.kube/config"
+          kubectl cluster-info
+          kubectl get namespaces | head -5
+          echo "✅ Kubernetes连接测试完成"
+          EOF
+          chmod +x /home/runner/test-k8s.sh
+
+          # GitHub Actions环境准备脚本
+          cat > /home/runner/github-actions-k8s-setup.sh << 'EOF'
+          #!/bin/bash
+          export KUBECONFIG="/home/runner/.kube/config"
+          echo "🚀 GitHub Actions Kubernetes环境已准备就绪"
+          echo "📋 当前上下文: $(kubectl config current-context)"
+          echo "🎯 可用命名空间:"
+          kubectl get namespaces | grep -E "(app-|default)" | head -5
+          EOF
+          chmod +x /home/runner/github-actions-k8s-setup.sh
+
+          # 部署验证脚本
+          cat > /home/runner/verify-deployment.sh << 'EOF'
+          #!/bin/bash
+          echo "🔍 验证部署状态..."
+          export KUBECONFIG="/home/runner/.kube/config"
+
+          NAMESPACE="${1:-app-develop}"
+          DEPLOYMENT="${2:-first-app}"
+
+          echo "检查命名空间: $NAMESPACE"
+          echo "检查部署: $DEPLOYMENT"
+
+          kubectl get namespace "$NAMESPACE" || echo "命名空间不存在"
+          kubectl get deployment "$DEPLOYMENT" -n "$NAMESPACE" || echo "部署不存在"
+
+          if kubectl get pods -n "$NAMESPACE" -l app="$DEPLOYMENT" &> /dev/null; then
+            echo "✅ 部署验证成功"
+            kubectl get pods -n "$NAMESPACE" -l app="$DEPLOYMENT"
+          else
+            echo "❌ 部署验证失败"
+          fi
+          EOF
+          chmod +x /home/runner/verify-deployment.sh
+
+          echo "🎉 GitHub Runner Enhanced 初始化完成！"
+          echo "📋 功能特性:"
+          echo "  ✅ kubectl $(kubectl version --client --short 2>/dev/null || echo 'installed')"
+          echo "  ✅ in-cluster Kubernetes连接"
+          echo "  ✅ Docker访问权限"
+          echo "  ✅ 完整的CI/CD部署能力"
+          echo ""
+          echo "📝 可用脚本:"
+          echo "  ~/test-k8s.sh                    - 测试Kubernetes连接"
+          echo "  ~/github-actions-k8s-setup.sh   - GitHub Actions环境设置"
+          echo "  ~/verify-deployment.sh <ns> <name> - 验证部署状态"
+          echo ""
+          echo "🚀 启动GitHub Actions Runner..."
+
+          # 启动GitHub Runner
+          exec /entrypoint.sh
+
+      # 卷配置
+      volumes:
+      # Docker socket
+      - name: docker-socket
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+
+      # 工作目录
+      - name: runner-work
+        emptyDir:
+          sizeLimit: 5Gi
+
+      # 节点选择器
+      nodeSelector:
+        kubernetes.io/os: linux
+
+      # 容忍度
+      tolerations:
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+
+      # 安全上下文
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+# ============================================
+# 3. Service配置（可选，用于健康检查）
+# ============================================
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-runner-enhanced-service
+  namespace: github-runners
+  labels:
+    app: github-runner-enhanced
+    version: "2.0"
+  annotations:
+    description: "GitHub Runner Enhanced health check service"
+
+spec:
+  selector:
+    app: github-runner-enhanced
+
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+
+  type: ClusterIP
+
+# ============================================
+# 4. 配置映射（可选）
+# ============================================
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: github-runner-enhanced-config
+  namespace: github-runners
+  labels:
+    app: github-runner-enhanced
+    type: configuration
+
+data:
+  # Kubernetes测试脚本
+  test-k8s-connection.sh: |
+    #!/bin/bash
+    echo "🔍 测试Kubernetes连接..."
+    export KUBECONFIG="/home/runner/.kube/config"
+
+    if kubectl cluster-info &> /dev/null; then
+      echo "✅ Kubernetes连接正常"
+      kubectl get namespaces | head -5
+    else
+      echo "❌ Kubernetes连接失败"
+      exit 1
+    fi
+
+    if kubectl auth can-i create deployments --all-namespaces; then
+      echo "✅ 部署权限正常"
+    else
+      echo "⚠️  部署权限不足"
+    fi
+
+  # GitHub Actions环境准备脚本
+  github-actions-setup.sh: |
+    #!/bin/bash
+    echo "🚀 GitHub Actions Kubernetes环境准备..."
+    export KUBECONFIG="/home/runner/.kube/config"
+
+    # 验证连接
+    kubectl cluster-info > /dev/null
+    if [ $? -eq 0 ]; then
+      echo "✅ Kubernetes环境就绪"
+      echo "📋 可用命名空间:"
+      kubectl get namespaces | grep -E "(app-|default)" | head -5
+    else
+      echo "❌ Kubernetes环境未就绪"
+      exit 1
+    fi
+
+  # 部署验证脚本
+  verify-deployment.sh: |
+    #!/bin/bash
+    echo "🔍 验证部署状态..."
+    export KUBECONFIG="/home/runner/.kube/config"
+
+    NAMESPACE="${1:-app-develop}"
+    DEPLOYMENT="${2:-first-app}"
+
+    echo "检查命名空间: $NAMESPACE"
+    echo "检查部署: $DEPLOYMENT"
+
+    kubectl get namespace "$NAMESPACE" || echo "命名空间不存在"
+    kubectl get deployment "$DEPLOYMENT" -n "$NAMESPACE" || echo "部署不存在"
+
+    if kubectl get pods -n "$NAMESPACE" -l app="$DEPLOYMENT" &> /dev/null; then
+      echo "✅ 部署验证成功"
+      kubectl get pods -n "$NAMESPACE" -l app="$DEPLOYMENT"
+    else
+      echo "❌ 部署验证失败"
+    fi
+
+# ============================================
+# 5. 部署说明
+# ============================================
+
+# 部署命令:
+# kubectl apply -f github-runner-complete-setup.yaml
+
+# 验证部署:
+# kubectl get pods -n github-runners -l app=github-runner-enhanced
+# kubectl logs -n github-runners -l app=github-runner-enhanced
+
+# 测试连接:
+# kubectl exec -n github-runners $(kubectl get pods -n github-runners -l app=github-runner-enhanced -o jsonpath='{.items[0].metadata.name}') -- /home/runner/test-k8s.sh
+
+# 清理部署:
+# kubectl delete -f github-runner-complete-setup.yaml

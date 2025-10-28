@@ -1,0 +1,80 @@
+# kubectl下载任务
+# 一次性任务，用于初始化共享卷中的kubectl
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kubectl-downloader
+  namespace: github-runners
+  labels:
+    app: kubectl-downloader
+    component: cache-initializer
+  annotations:
+    description: "一次性任务，下载kubectl到共享卷"
+
+spec:
+  template:
+    metadata:
+      labels:
+        app: kubectl-downloader
+        component: cache-initializer
+    spec:
+      restartPolicy: OnFailure
+      volumes:
+      - name: shared-cache
+        persistentVolumeClaim:
+          claimName: kubectl-cache-pvc
+      containers:
+      - name: kubectl-downloader
+        image: alpine:latest
+        command: ["/bin/sh"]
+        args:
+        - -c
+        - |
+          set -e
+          echo "🚀 开始下载kubectl到共享卷..."
+
+          # 安装curl
+          apk add --no-cache curl
+
+          # 下载kubectl
+          KUBECTL_VERSION="v1.32.2"
+          TARGET_PATH="/shared/kubectl-${KUBECTL_VERSION}"
+          CURRENT_PATH="/shared/kubectl"
+
+          echo "📦 下载kubectl版本: $KUBECTL_VERSION"
+
+          # 下载kubectl
+          curl -L "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$TARGET_PATH"
+
+          # 设置执行权限
+          chmod +x "$TARGET_PATH"
+
+          # 创建软链接
+          ln -sf "$TARGET_PATH" "$CURRENT_PATH"
+
+          # 验证kubectl
+          if "$CURRENT_PATH" version --client --short >/dev/null 2>&1; then
+            echo "✅ kubectl下载并验证成功"
+            echo "📋 版本信息: $("$CURRENT_PATH" version --client --short 2>/dev/null || echo 'version check failed')"
+            echo "📊 文件大小: $(ls -la "$CURRENT_PATH" | awk '{print $5}') bytes"
+
+            # 创建版本信息文件
+            echo "$KUBECTL_VERSION" > /shared/kubectl-version
+            echo "$(date)" > /shared/kubectl-update-time
+
+            echo "✅ kubectl缓存初始化完成"
+          else
+            echo "❌ kubectl验证失败"
+            exit 1
+          fi
+        volumeMounts:
+        - name: shared-cache
+          mountPath: /shared
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"

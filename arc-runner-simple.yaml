@@ -1,0 +1,124 @@
+apiVersion: actions.summerwind.dev/v1alpha1
+kind: RunnerDeployment
+metadata:
+  name: github-runner-arc
+  namespace: actions-runner-system
+spec:
+  replicas: 1
+  template:
+    spec:
+      repository: gszw90/k8s-app
+      serviceAccountName: github-runner-arc
+      githubAPICredentialsFrom:
+        secretRef:
+          name: controller-manager
+          namespace: actions-runner-system
+      volumes:
+      - name: kubectl-shared
+        persistentVolumeClaim:
+          claimName: kubectl-shared-pvc
+      - name: host-kubectl
+        hostPath:
+          path: /usr/local/bin/kubectl
+          type: FileOrCreate
+      - name: runner-work
+        emptyDir: {}
+      dockerEnabled: true
+      env:
+      - name: KUBECTL_VERSION
+        value: "v1.32.2"
+      initContainers:
+      - name: setup-kubectl
+        image: alpine:latest
+        command: ["sh", "-c"]
+        args:
+        - |
+          set -e
+          KUBECTL_VERSION="v1.32.2"
+          KUBECTL_BINARY="/opt/kubectl/kubectl-${KUBECTL_VERSION}"
+          KUBECTL_SYMLINK="/opt/kubectl/kubectl"
+          HOST_KUBECTL="/host/kubectl"
+
+          echo "🔍 智能kubectl初始化开始..."
+          apk add --no-cache curl
+
+          # 策略1: 检查共享卷kubectl缓存
+          if [ -f "$KUBECTL_BINARY" ] && "$KUBECTL_BINARY" version --client --short >/dev/null 2>&1; then
+            echo "✅ 使用共享卷kubectl缓存"
+            ln -sf "$KUBECTL_BINARY" "$KUBECTL_SYMLINK"
+          # 策略2: 从宿主机复制kubectl
+          elif [ -f "$HOST_KUBECTL" ] && "$HOST_KUBECTL" version --client --short >/dev/null 2>&1; then
+            echo "✅ 使用宿主机kubectl"
+            cp "$HOST_KUBECTL" "$KUBECTL_BINARY"
+            chmod +x "$KUBECTL_BINARY"
+            ln -sf "$KUBECTL_BINARY" "$KUBECTL_SYMLINK"
+          # 策略3: 从网络下载kubectl
+          else
+            echo "📦 下载kubectl..."
+            curl -L "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$KUBECTL_BINARY"
+            chmod +x "$KUBECTL_BINARY"
+            ln -sf "$KUBECTL_BINARY" "$KUBECTL_SYMLINK"
+          fi
+
+          # 验证kubectl
+          if "$KUBECTL_SYMLINK" version --client --short >/dev/null 2>&1; then
+            echo "✅ kubectl设置成功: $("$KUBECTL_SYMLINK" version --client --short 2>/dev/null)"
+            # 创建kubeconfig
+            mkdir -p /home/runner/.kube
+            cat > /home/runner/.kube/config << 'EOF'
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority: /run/secrets/kubernetes.io/serviceaccount/ca.crt
+    server: https://kubernetes.default.svc
+  name: in-cluster
+contexts:
+- context:
+    cluster: in-cluster
+    user: in-cluster-user
+  name: in-cluster
+current-context: in-cluster
+kind: Config
+preferences: {}
+users:
+- name: in-cluster-user
+  user:
+    tokenFile: /run/secrets/kubernetes.io/serviceaccount/token
+EOF
+            chmod 600 /home/runner/.kube/config
+            chown -R 1000:1000 /home/runner
+            echo "✅ kubectl环境初始化完成"
+          else
+            echo "❌ kubectl设置失败"
+            exit 1
+          fi
+        volumeMounts:
+        - name: kubectl-shared
+          mountPath: /opt/kubectl
+        - name: host-kubectl
+          mountPath: /host
+          readOnly: true
+      volumeMounts:
+      - name: kubectl-shared
+        mountPath: /opt/kubectl
+      - name: runner-work
+        mountPath: /home/runner/_work
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-runner-arc
+  namespace: actions-runner-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: github-runner-arc-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: github-runner-arc
+  namespace: actions-runner-system

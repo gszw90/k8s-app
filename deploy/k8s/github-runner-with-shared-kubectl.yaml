@@ -1,0 +1,377 @@
+# GitHub Runner with shared kubectl volume
+# 使用共享存储卷的优化版GitHub Actions Runner
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-runner-optimized
+  namespace: github-runners
+  labels:
+    app: github-runner-optimized
+    version: "2.2"
+    feature: shared-kubectl
+  annotations:
+    description: "GitHub Actions Runner with shared kubectl volume (optimized version)"
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: github-runner-optimized
+
+  template:
+    metadata:
+      labels:
+        app: github-runner-optimized
+        version: "2.2"
+        feature: shared-kubectl
+      annotations:
+        description: "GitHub Actions Runner Pod with shared kubectl volume and optimized startup"
+
+    spec:
+      # 使用增强权限的ServiceAccount
+      serviceAccountName: github-runner-admin
+
+      volumes:
+      # Docker socket
+      - name: docker-socket
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+
+      # 工作目录
+      - name: runner-work
+        emptyDir:
+          sizeLimit: 2Gi
+
+      # 共享kubectl缓存卷
+      - name: kubectl-cache
+        persistentVolumeClaim:
+          claimName: kubectl-cache-pvc
+
+      # kubeconfig模板
+      - name: kubeconfig-template
+        configMap:
+          name: kubeconfig-template
+          defaultMode: 0600
+
+      # 运行时kubeconfig数据（可写）
+      - name: kubeconfig-data
+        emptyDir:
+          sizeLimit: 10Mi
+
+      # 初始化容器 - 配置kubectl环境
+      initContainers:
+      - name: setup-kubectl
+        image: busybox:1.35
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -e
+          echo "🔧 初始化kubectl环境 (共享卷版本)..."
+
+          # 创建必要的目录
+          mkdir -p /home/runner/.kube
+          mkdir -p /usr/local/bin
+
+          # 三级容错kubectl初始化
+          setup_kubectl() {
+            # 第一优先级：共享卷kubectl
+            if [ -f "/shared/kubectl" ] && [ -s "/shared/kubectl" ]; then
+              echo "✅ 从共享卷复制kubectl"
+              cp /shared/kubectl /usr/local/bin/kubectl
+              chmod +x /usr/local/bin/kubectl
+
+              # 验证功能
+              if /usr/local/bin/kubectl version --client --short >/dev/null 2>&1; then
+                echo "✅ 共享卷kubectl验证通过"
+                return 0
+              else
+                echo "⚠️ 共享卷kubectl验证失败"
+              fi
+            fi
+
+            # 第二优先级：本地降级缓存
+            echo "⚠️ 共享卷不可用，准备本地降级kubectl..."
+            if curl -L "https://dl.k8s.io/release/v1.32.2/bin/linux/amd64/kubectl" -o "/usr/local/bin/kubectl"; then
+              chmod +x /usr/local/bin/kubectl
+              echo "✅ 本地降级kubectl准备完成"
+
+              # 验证功能
+              if /usr/local/bin/kubectl version --client --short >/dev/null 2>&1; then
+                echo "✅ 本地降级kubectl验证通过"
+                return 0
+              else
+                echo "❌ 本地降级kubectl验证失败"
+              fi
+            fi
+
+            # 第三优先级：失败
+            echo "❌ 所有kubectl初始化方案都失败了"
+            return 1
+          }
+
+          if setup_kubectl; then
+            echo "✅ kubectl初始化成功: $(/usr/local/bin/kubectl version --client --short 2>/dev/null || echo 'version check failed')"
+          else
+            echo "❌ kubectl初始化失败，启动终止"
+            exit 1
+          fi
+
+          # 复制kubeconfig模板
+          if [ -f "/opt/kubeconfig/config.yaml" ]; then
+            echo "✅ 复制kubeconfig模板..."
+            cp /opt/kubeconfig/config.yaml /home/runner/.kube/config
+            chmod 600 /home/runner/.kube/config
+          else
+            echo "❌ kubeconfig模板不存在，动态生成..."
+            # 动态生成kubeconfig
+            cat > /home/runner/.kube/config << 'EOF'
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority: /run/secrets/kubernetes.io/serviceaccount/ca.crt
+    server: https://kubernetes.default.svc
+  name: in-cluster
+contexts:
+- context:
+    cluster: in-cluster
+    user: in-cluster-user
+  name: in-cluster
+current-context: in-cluster
+kind: Config
+preferences: {}
+users:
+- name: in-cluster-user
+  user:
+    tokenFile: /run/secrets/kubernetes.io/serviceaccount/token
+EOF
+            chmod 600 /home/runner/.kube/config
+          fi
+
+          # 设置权限
+          chown -R 1000:1000 /home/runner/.kube
+          chown 1000:1000 /usr/local/bin/kubectl
+
+          echo "✅ kubectl环境初始化完成"
+
+        volumeMounts:
+        - name: kubectl-cache
+          mountPath: /shared
+          readOnly: true
+        - name: kubeconfig-template
+          mountPath: /opt/kubeconfig
+          readOnly: true
+
+      # 主容器
+      containers:
+      - name: github-runner
+        image: myoung34/github-runner:latest
+        env:
+        # GitHub配置
+        - name: REPO_URL
+          value: "https://github.com/gszw90/k8s-app"
+        - name: RUNNER_NAME
+          value: "github-runner-optimized"
+        - name: RUNNER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-runner-secret
+              key: RUNNER_TOKEN
+        - name: RUNNER_GROUP
+          value: "default"
+
+        # Kubernetes配置
+        - name: KUBERNETES_IN_CLUSTER
+          value: "true"
+        - name: KUBECONFIG
+          value: "/home/runner/.kube/config"
+
+        # Docker配置
+        - name: DOCKER_HOST
+          value: "unix:///var/run/docker.sock"
+        - name: DOCKER_TLS_VERIFY
+          value: "0"
+
+        # 环境标识
+        - name: RUNNER_FEATURES
+          value: "kubectl,docker,in-cluster,shared-volume,optimized"
+        - name: RUNNER_VERSION
+          value: "2.2-shared-kubectl"
+
+        # 资源限制 - 优化配置
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"  # 优化：减少内存需求
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+
+        # 卷挂载
+        volumeMounts:
+        # Docker socket
+        - name: docker-socket
+          mountPath: /var/run/docker.sock
+
+        # 工作目录
+        - name: runner-work
+          mountPath: /home/runner/_work
+
+        # kubectl配置（已经由initContainer准备）
+        - name: kubeconfig-data
+          mountPath: /home/runner/.kube
+          readOnly: false
+
+        # 健康检查
+        livenessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 8080
+          initialDelaySeconds: 30  # 优化：减少启动延迟
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 8080
+          initialDelaySeconds: 15  # 优化：更快的就绪检查
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        # 启动命令 - 优化版本（使用共享卷kubectl）
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -e
+          echo "🚀 启动GitHub Runner Optimized (v2.2) - 共享卷kubectl版本"
+
+          # 验证kubectl是否就绪
+          if command -v kubectl &> /dev/null; then
+            echo "✅ kubectl已就绪: $(kubectl version --client --short 2>/dev/null || echo 'version check failed')"
+          else
+            echo "❌ kubectl未就绪，启动失败"
+            exit 1
+          fi
+
+          # 设置环境变量
+          export KUBECONFIG="/home/runner/.kube/config"
+          echo "export KUBECONFIG=\"/home/runner/.kube/config\"" >> /home/runner/.bashrc
+
+          # 验证Kubernetes连接
+          echo "🔍 验证Kubernetes连接..."
+          if kubectl cluster-info &> /dev/null; then
+            echo "✅ Kubernetes连接成功"
+          else
+            echo "❌ Kubernetes连接失败"
+            exit 1
+          fi
+
+          # 测试权限
+          echo "🔐 测试Kubernetes权限..."
+          if kubectl auth can-i create deployments --all-namespaces; then
+            echo "✅ 部署权限正常"
+          else
+            echo "⚠️  部署权限可能不足"
+          fi
+
+          # 创建实用脚本
+          echo "📝 创建实用脚本..."
+
+          # 共享卷连接测试脚本
+          cat > /home/runner/test-k8s.sh << 'EOF'
+#!/bin/bash
+echo "🔍 测试Kubernetes连接状态（共享卷版本）..."
+export KUBECONFIG="/home/runner/.kube/config"
+
+# 快速连接测试
+if kubectl cluster-info &> /dev/null; then
+  echo "✅ Kubernetes连接正常"
+  echo "📋 可用命名空间:"
+  kubectl get namespaces | grep -E "(app-|default)" | head -3
+
+  # 显示kubectl版本信息
+  echo "🔧 kubectl版本: $(kubectl version --client --short 2>/dev/null || echo 'unknown')"
+else
+  echo "❌ Kubernetes连接失败"
+  exit 1
+fi
+EOF
+          chmod +x /home/runner/test-k8s.sh
+
+          # GitHub Actions环境准备脚本
+          cat > /home/runner/github-actions-k8s-setup.sh << 'EOF'
+#!/bin/bash
+export KUBECONFIG="/home/runner/.kube/config"
+echo "🚀 GitHub Actions Kubernetes环境已准备就绪（共享卷版本）"
+echo "📋 当前上下文: $(kubectl config current-context)"
+echo "⏱️  启动时间: $(date)"
+echo "🔧 kubectl版本: $(kubectl version --client --short 2>/dev/null || echo 'unknown')"
+EOF
+          chmod +x /home/runner/github-actions-k8s-setup.sh
+
+          # 快速验证脚本
+          cat > /home/runner/quick-verify.sh << 'EOF'
+#!/bin/bash
+echo "⚡ 快速验证Kubernetes环境（共享卷版本）..."
+export KUBECONFIG="/home/runner/.kube/config"
+
+# 基本连接测试
+kubectl cluster-info > /dev/null && echo "✅ API连接正常" || echo "❌ API连接失败"
+
+# 权限测试
+kubectl auth can-i create deployments > /dev/null && echo "✅ 部署权限正常" || echo "⚠️  部署权限不足"
+
+# kubectl功能测试
+if command -v kubectl &> /dev/null; then
+  echo "✅ kubectl工具可用: $(kubectl version --client --short 2>/dev/null || echo 'version check failed')"
+else
+  echo "❌ kubectl工具不可用"
+fi
+
+# 时间戳
+echo "🕐 验证时间: $(date)"
+EOF
+          chmod +x /home/runner/quick-verify.sh
+
+          echo "🎉 GitHub Runner Optimized 初始化完成！"
+          echo "📋 优化特性:"
+          echo "  ✅ 共享卷kubectl (预加载版本)"
+          echo "  ✅ in-cluster Kubernetes连接"
+          echo "  ✅ Docker访问权限"
+          echo "  ✅ 三级容错机制"
+          echo "  ✅ 快速启动（共享卷配置）"
+          echo "  ⚡ 优化的资源使用"
+          echo ""
+          echo "📝 可用脚本:"
+          echo "  ~/test-k8s.sh                    - 测试Kubernetes连接"
+          echo "  ~/github-actions-k8s-setup.sh   - GitHub Actions环境设置"
+          echo "  ~/quick-verify.sh               - 快速验证环境"
+          echo ""
+          echo "🚀 启动GitHub Actions Runner（共享卷版本）..."
+
+          # 启动GitHub Runner
+          exec /entrypoint.sh
+
+      # 节点选择器
+      nodeSelector:
+        kubernetes.io/os: linux
+
+      # 容忍度
+      tolerations:
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+
+      # 安全上下文
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000

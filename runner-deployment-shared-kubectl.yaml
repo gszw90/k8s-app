@@ -1,0 +1,249 @@
+# GitHub ARC Runner with shared kubectl
+# 使用新版本ARC API格式
+
+---
+apiVersion: actions.summerwind.dev/v1alpha1
+kind: RunnerDeployment
+metadata:
+  name: github-runner-arc
+  namespace: actions-runner-system
+  labels:
+    app: github-runner-arc
+    feature: shared-kubectl
+spec:
+  replicas: 1
+  template:
+    spec:
+      repository: gszw90/k8s-app
+      serviceAccountName: github-runner-arc
+
+      # GitHub App认证配置 (新版本API)
+      githubAPICredentialsFrom:
+        secretRef:
+          name: controller-manager
+          namespace: actions-runner-system
+
+      # 卷定义
+      volumes:
+      # kubectl共享卷
+      - name: kubectl-shared
+        persistentVolumeClaim:
+          claimName: kubectl-shared-pvc
+      # Docker socket (用于构建)
+      - name: docker-socket
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+      # 工作目录
+      - name: runner-work
+        emptyDir: {}
+      # 宿主机kubectl (备用方案)
+      - name: host-kubectl
+        hostPath:
+          path: /usr/local/bin/kubectl
+          type: FileOrCreate
+
+      # Docker支持
+      dockerEnabled: true
+      dockerdWithinRunnerContainer: true
+
+      # 环境变量
+      env:
+      - name: KUBECTL_PATH
+        value: "/opt/kubectl/kubectl"
+      - name: KUBECONFIG
+        value: "/home/runner/.kube/config"
+      - name: PATH
+        value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/kubectl"
+      - name: KUBECTL_VERSION
+        value: "v1.32.2"
+      - name: RUNNER_FEATURES
+        value: "kubectl-shared,host-fallback,github-app"
+
+      # 卷挂载
+      volumeMounts:
+      - name: kubectl-shared
+        mountPath: /opt/kubectl
+      - name: docker-socket
+        mountPath: /var/run/docker.sock
+      - name: runner-work
+        mountPath: /home/runner/_work
+
+      # 智能InitContainer - 三层kubectl获取策略
+      initContainers:
+      - name: setup-kubectl
+        image: alpine:latest
+        command: ["sh", "-c"]
+        args:
+        - |
+          set -e
+          KUBECTL_VERSION="v1.32.2"
+          KUBECTL_BINARY="/opt/kubectl/kubectl-${KUBECTL_VERSION}"
+          KUBECTL_SYMLINK="/opt/kubectl/kubectl"
+          HOST_KUBECTL="/host/kubectl"
+
+          echo "🔍 智能kubectl初始化开始..."
+          echo "📍 目标版本: $KUBECTL_VERSION"
+
+          # 安装基础工具
+          echo "📦 安装基础工具..."
+          apk add --no-cache curl
+
+          # 三层kubectl获取策略
+          setup_kubectl_success() {
+            echo "✅ kubectl设置成功！"
+            echo "📋 版本信息: $("$KUBECTL_SYMLINK" version --client --short 2>/dev/null || echo 'version check failed')"
+            echo "📊 文件大小: $(ls -la "$KUBECTL_BINARY" | awk '{print $5}') bytes"
+            echo "📍 文件位置: $KUBECTL_BINARY"
+            echo "🔗 软链接: $KUBECTL_SYMLINK"
+
+            # 创建版本信息文件
+            echo "$KUBECTL_VERSION" > /opt/kubectl/kubectl-version
+            echo "$(date)" > /opt/kubectl/kubectl-update-time
+
+            # 创建kubeconfig
+            mkdir -p /home/runner/.kube
+            cat > /home/runner/.kube/config << 'EOF'
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority: /run/secrets/kubernetes.io/serviceaccount/ca.crt
+    server: https://kubernetes.default.svc
+  name: in-cluster
+contexts:
+- context:
+    cluster: in-cluster
+    user: in-cluster-user
+  name: in-cluster
+current-context: in-cluster
+kind: Config
+preferences: {}
+users:
+- name: in-cluster-user
+  user:
+    tokenFile: /run/secrets/kubernetes.io/serviceaccount/token
+EOF
+
+            chmod 600 /home/runner/.kube/config
+            chown -R 1000:1000 /home/runner
+
+            echo "✅ kubectl环境初始化完成！"
+            return 0
+          }
+
+          # 策略1: 检查共享卷kubectl缓存
+          echo "🔄 策略1: 检查共享卷kubectl缓存..."
+          if [ -f "$KUBECTL_BINARY" ]; then
+            echo "✅ 发现共享卷kubectl缓存文件"
+            if "$KUBECTL_BINARY" version --client --short >/dev/null 2>&1; then
+              echo "✅ 共享卷kubectl验证通过"
+              ln -sf "$KUBECTL_BINARY" "$KUBECTL_SYMLINK"
+              setup_kubectl_success
+              exit 0
+            else
+              echo "⚠️  共享卷kubectl文件损坏，删除并继续其他策略"
+              rm -f "$KUBECTL_BINARY"
+            fi
+          else
+            echo "📦 共享卷kubectl缓存文件不存在"
+          fi
+
+          # 策略2: 从宿主机复制kubectl
+          echo "🔄 策略2: 尝试从宿主机复制kubectl..."
+          if [ -f "$HOST_KUBECTL" ]; then
+            echo "✅ 发现宿主机kubectl"
+            if "$HOST_KUBECTL" version --client --short >/dev/null 2>&1; then
+              echo "✅ 宿主机kubectl验证通过"
+              # 检查版本兼容性
+              HOST_VERSION=$("$HOST_KUBECTL" version --client --short 2>/dev/null | grep -o 'v[0-9]\+\.[0-9]\+\.[0-9]\+' || echo "unknown")
+              echo "📋 宿主机kubectl版本: $HOST_VERSION"
+
+              # 复制到共享卷
+              cp "$HOST_KUBECTL" "$KUBECTL_BINARY"
+              chmod +x "$KUBECTL_BINARY"
+              ln -sf "$KUBECTL_BINARY" "$KUBECTL_SYMLINK"
+
+              echo "✅ 宿主机kubectl已复制到共享卷"
+              setup_kubectl_success
+              exit 0
+            else
+              echo "⚠️  宿主机kubectl验证失败"
+            fi
+          else
+            echo "❌ 宿主机kubectl不存在: $HOST_KUBECTL"
+          fi
+
+          # 策略3: 从网络下载kubectl
+          echo "🔄 策略3: 从网络下载kubectl..."
+          echo "📦 下载kubectl版本: $KUBECTL_VERSION"
+
+          DOWNLOAD_URL="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "🌐 下载地址: $DOWNLOAD_URL"
+
+          if curl -f -L "$DOWNLOAD_URL" -o kubectl-temp; then
+            echo "✅ kubectl下载成功"
+
+            # 验证下载的kubectl
+            if ./kubectl-temp version --client --short >/dev/null 2>&1; then
+              echo "✅ 下载的kubectl验证通过"
+
+              # 保存到共享卷
+              mv kubectl-temp "$KUBECTL_BINARY"
+              chmod +x "$KUBECTL_BINARY"
+              ln -sf "$KUBECTL_BINARY" "$KUBECTL_SYMLINK"
+
+              echo "✅ kubectl已保存到共享卷"
+              setup_kubectl_success
+              exit 0
+            else
+              echo "❌ 下载的kubectl验证失败"
+              rm -f kubectl-temp
+            fi
+          else
+            echo "❌ kubectl下载失败"
+          fi
+
+          # 所有策略都失败
+          echo "❌ 所有kubectl获取策略都失败了！"
+          echo "📋 失败原因总结:"
+          echo "  - 共享卷缓存: 不存在或损坏"
+          echo "  - 宿主机kubectl: 不存在或不可用"
+          echo "  - 网络下载: 失败"
+          echo ""
+          echo "🔧 手动解决方案:"
+          echo "  1. 确保宿主机kubectl可用: which kubectl"
+          echo "  2. 检查网络连接: curl -I https://dl.k8s.io"
+          echo "  3. 手动复制kubectl到共享卷"
+
+          exit 1
+
+        volumeMounts:
+        - name: kubectl-shared
+          mountPath: /opt/kubectl
+        - name: host-kubectl
+          mountPath: /host
+          readOnly: true
+        env:
+        - name: KUBECTL_VERSION
+          value: "v1.32.2"
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-runner-arc
+  namespace: actions-runner-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: github-runner-arc-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: github-runner-arc
+  namespace: actions-runner-system

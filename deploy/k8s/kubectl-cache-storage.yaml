@@ -1,0 +1,61 @@
+# kubectl共享卷存储配置
+# hostPath方式存储kubectl二进制文件缓存
+
+---
+# PersistentVolume - hostPath存储
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kubectl-cache-pv
+  labels:
+    type: kubectl-cache
+    app: github-runner-optimized
+  annotations:
+    description: "kubectl二进制文件共享存储卷"
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce  # hostPath通常是RWO
+  persistentVolumeReclaimPolicy: Retain  # 保留数据
+  storageClassName: manual
+  volumeMode: Filesystem
+  hostPath:
+    path: /var/lib/kubectl-cache  # 节点本地存储路径
+    type: DirectoryOrCreate  # 自动创建目录
+
+---
+# PersistentVolumeClaim - 声明存储使用
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubectl-cache-pvc
+  namespace: github-runners
+  labels:
+    app: github-runner-optimized
+    type: kubectl-cache
+  annotations:
+    description: "kubectl缓存存储声明"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: manual
+  selector:
+    matchLabels:
+      type: kubectl-cache
+  volumeMode: Filesystem
+
+---
+# 存储类定义 (如果集群中没有manual存储类)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: manual
+  labels:
+    app: github-runner-optimized
+provisioner: kubernetes.io/no-provisioner  # 手动供应
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: false

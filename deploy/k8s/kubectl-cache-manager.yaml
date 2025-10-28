@@ -1,0 +1,223 @@
+# kubectl缓存管理器
+# 三级容错机制：共享卷 -> 本地缓存 -> 在线下载
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubectl-cache-manager
+  namespace: github-runners
+  labels:
+    app: kubectl-cache-manager
+    version: v1.0.0
+    component: cache-manager
+  annotations:
+    description: "kubectl二进制文件缓存管理器，支持三级容错机制"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kubectl-cache-manager
+  template:
+    metadata:
+      labels:
+        app: kubectl-cache-manager
+        version: v1.0.0
+        component: cache-manager
+    spec:
+      volumes:
+      # 共享存储卷
+      - name: shared-cache
+        persistentVolumeClaim:
+          claimName: kubectl-cache-pvc
+      # 本地缓存卷
+      - name: local-cache
+        emptyDir:
+          sizeLimit: 100Mi
+      containers:
+      - name: cache-manager
+        image: curlimages/curl:latest
+        command: ["/bin/sh"]
+        args:
+        - -c
+        - |
+          set -e
+
+          echo "🚀 kubectl缓存管理器启动 v1.0.0"
+          echo "📋 配置信息:"
+          echo "  KUBECTL_VERSION: $KUBECTL_VERSION"
+          echo "  UPDATE_STRATEGY: $UPDATE_STRATEGY"
+          echo "  共享存储路径: /shared"
+          echo "  本地缓存路径: /local"
+
+          # 三级容错函数
+          ensure_kubectl() {
+            local target="/shared/kubectl-${KUBECTL_VERSION}"
+            local current="/shared/kubectl"
+
+            echo "🔍 检查kubectl可用性..."
+
+            # 第一优先级：共享卷
+            if [ -f "$target" ] && [ -s "$target" ]; then
+              echo "✅ 使用共享卷kubectl: $target"
+              chmod +x "$target"
+              ln -sf "$target" "$current"
+
+              # 验证kubectl功能
+              if "$current" version --client --short >/dev/null 2>&1; then
+                echo "✅ kubectl功能验证通过"
+                return 0
+              else
+                echo "⚠️ kubectl功能验证失败，尝试其他方案"
+              fi
+            fi
+
+            # 第二优先级：本地缓存
+            if [ ! -f "/local/kubectl-backup" ]; then
+              echo "📦 准备本地缓存kubectl..."
+              if curl -L "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "/local/kubectl-backup"; then
+                chmod +x "/local/kubectl-backup"
+                echo "✅ 本地缓存kubectl准备完成"
+              else
+                echo "❌ 本地缓存kubectl下载失败"
+              fi
+            fi
+
+            if [ -f "/local/kubectl-backup" ] && [ -s "/local/kubectl-backup" ]; then
+              echo "⚠️ 使用本地缓存kubectl"
+              cp "/local/kubectl-backup" "$target"
+              chmod +x "$target"
+              ln -sf "$target" "$current"
+
+              # 验证kubectl功能
+              if "$current" version --client --short >/dev/null 2>&1; then
+                echo "✅ 本地缓存kubectl验证通过"
+                return 0
+              else
+                echo "❌ 本地缓存kubectl验证失败"
+              fi
+            fi
+
+            # 第三优先级：在线下载
+            echo "🌐 共享卷和本地缓存都不可用，尝试在线下载kubectl..."
+            if curl -L "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$target"; then
+              chmod +x "$target"
+              ln -sf "$target" "$current"
+
+              # 验证kubectl功能
+              if "$current" version --client --short >/dev/null 2>&1; then
+                echo "✅ 在线下载kubectl验证通过"
+                return 0
+              else
+                echo "❌ 在线下载kubectl验证失败"
+              fi
+            else
+              echo "❌ 在线下载kubectl失败"
+            fi
+
+            # 所有方案都失败
+            echo "❌ 所有kubectl获取方式都失败了"
+            return 1
+          }
+
+          # 更新检查函数
+          check_for_updates() {
+            if [ "$UPDATE_STRATEGY" != "automatic" ]; then
+              return 0
+            fi
+
+            echo "🔄 检查kubectl更新..."
+
+            # 这里可以添加版本检查逻辑
+            # 比如检查最新版本号并与当前版本比较
+            local latest_version=$(curl -L -s https://dl.k8s.io/release/stable.txt || echo "")
+            if [ -n "$latest_version" ] && [ "$latest_version" != "$KUBECTL_VERSION" ]; then
+              echo "🆕 发现新版本: $latest_version"
+              # 可以触发自动更新逻辑
+            fi
+          }
+
+          # 主循环
+          while true; do
+            echo "⏰ $(date '+%Y-%m-%d %H:%M:%S') - 开始kubectl检查周期"
+
+            if ensure_kubectl; then
+              echo "✅ kubectl就绪: $("$current" version --client --short 2>/dev/null || echo 'version check failed')"
+              echo "📊 存储状态:"
+              echo "  共享卷: $(df -h /shared | tail -1)"
+              echo "  本地缓存: $(df -h /local | tail -1)"
+
+              # 更新检查
+              check_for_updates
+            else
+              echo "❌ kubectl准备失败，将在下个周期重试"
+            fi
+
+            echo "💤 等待300秒后进行下次检查..."
+            sleep 300  # 5分钟检查一次
+          done
+        env:
+        - name: KUBECTL_VERSION
+          value: "v1.32.2"
+        - name: UPDATE_STRATEGY
+          value: "manual"  # manual | automatic
+        - name: TZ
+          value: "Asia/Shanghai"
+        volumeMounts:
+        - name: shared-cache
+          mountPath: /shared
+        - name: local-cache
+          mountPath: /local
+        resources:
+          requests:
+            cpu: "10m"
+            memory: "32Mi"
+          limits:
+            cpu: "50m"
+            memory: "64Mi"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - test -f /shared/kubectl && /shared/kubectl version --client --short
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - test -f /shared/kubectl && /shared/kubectl version --client --short
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+
+---
+# Service (可选，用于健康检查)
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubectl-cache-manager
+  namespace: github-runners
+  labels:
+    app: kubectl-cache-manager
+    component: cache-manager
+  annotations:
+    description: "kubectl缓存管理器健康检查服务"
+spec:
+  selector:
+    app: kubectl-cache-manager
+  ports:
+  - name: health
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP
