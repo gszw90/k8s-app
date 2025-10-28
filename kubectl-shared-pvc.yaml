@@ -1,0 +1,20 @@
+# kubectl共享PVC配置
+# 用于在ARC Runner重建间共享kubectl二进制文件
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubectl-shared-pvc
+  namespace: actions-runner-system
+  labels:
+    app: kubectl-cache
+    purpose: shared-binary
+    version: "v1.32.2"
+  annotations:
+    description: "共享kubectl二进制文件，避免重复下载"
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 500Mi
+  storageClassName: hostpath  # Docker Desktop适用
