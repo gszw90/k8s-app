@@ -1,4 +1,4 @@
-name: 🚀 极简 CI/CD 部署
+name: 🚀 CI/CD 部署
 
 on:
   push:
@@ -20,31 +20,49 @@ jobs:
       run: |
         case "${GITHUB_REF#refs/heads/}" in
           develop-backend-first-app)
-            export NAMESPACE="k8s-app-dev"
+            export NAMESPACE="app-develop"
+            export ENVIRONMENT="develop"
             export IMAGE_TAG="dev-${GITHUB_SHA::7}"
+            export SERVICE_TYPE="backend"
+            export SERVICE_NAME="first-app"
             export K8S_CONFIG="deploy/k8s/backend-first-app.yaml"
             ;;
           staging-backend-first-app)
-            export NAMESPACE="k8s-app-staging"
+            export NAMESPACE="app-staging"
+            export ENVIRONMENT="staging"
             export IMAGE_TAG="staging-${GITHUB_SHA::7}"
+            export SERVICE_TYPE="backend"
+            export SERVICE_NAME="first-app"
             export K8S_CONFIG="deploy/k8s/backend-first-app.yaml"
             ;;
           prod-backend-first-app)
-            export NAMESPACE="k8s-app-prod"
+            export NAMESPACE="app-prod"
+            export ENVIRONMENT="prod"
             export IMAGE_TAG="${GITHUB_SHA::7}"
+            export SERVICE_TYPE="backend"
+            export SERVICE_NAME="first-app"
             export K8S_CONFIG="deploy/k8s/backend-first-app.yaml"
             ;;
         esac
 
+        # 设置服务全名
+        export FULL_SERVICE_NAME="${SERVICE_TYPE}-${SERVICE_NAME}"
+
         echo "NAMESPACE=$NAMESPACE" >> $GITHUB_ENV
+        echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
         echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+        echo "SERVICE_TYPE=$SERVICE_TYPE" >> $GITHUB_ENV
+        echo "SERVICE_NAME=$SERVICE_NAME" >> $GITHUB_ENV
+        echo "FULL_SERVICE_NAME=$FULL_SERVICE_NAME" >> $GITHUB_ENV
         echo "K8S_CONFIG=$K8S_CONFIG" >> $GITHUB_ENV
-        echo "📍 环境: ${GITHUB_REF#refs/heads/}"
+        echo "📍 环境: $ENVIRONMENT"
         echo "🏷️  标签: $IMAGE_TAG"
+        echo "📦 命名空间: $NAMESPACE"
+        echo "🔧 服务全名: $FULL_SERVICE_NAME"
 
     - name: 🐳 构建镜像
       run: |
-        echo "🐳 构建镜像: backend-first-app:$IMAGE_TAG"
+        echo "🐳 构建镜像: $FULL_SERVICE_NAME:$IMAGE_TAG"
 
         if [[ ! -f "deploy/Dockerfile-first-app" ]]; then
           echo "❌ Dockerfile不存在"
@@ -52,11 +70,11 @@ jobs:
         fi
 
         docker build \
-          -t backend-first-app:$IMAGE_TAG \
+          -t $FULL_SERVICE_NAME:$IMAGE_TAG \
           -f deploy/Dockerfile-first-app \
           backend/
 
-        echo "✅ 构建完成: backend-first-app:$IMAGE_TAG"
+        echo "✅ 构建完成: $FULL_SERVICE_NAME:$IMAGE_TAG"
 
     - name: ⚡ 配置Kubernetes
       run: |
@@ -96,49 +114,67 @@ EOF
 
     - name: 🚀 部署应用
       run: |
-        echo "🚀 部署到命名空间: $NAMESPACE"
+        echo "🚀 部署服务: $FULL_SERVICE_NAME"
+        echo "📦 命名空间: $NAMESPACE"
+        echo "🌍 环境: $ENVIRONMENT"
 
         # 创建命名空间
         kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+
+        # 设置环境变量进行K8s配置替换
+        export DEPLOYMENT_NAME="$FULL_SERVICE_NAME"
+        export SERVICE_NAME="$FULL_SERVICE_NAME-service"
+        export CONFIGMAP_NAME="$FULL_SERVICE_NAME-config"
+        export SECRET_NAME="$FULL_SERVICE_NAME-secret"
+        export INGRESS_NAME="$FULL_SERVICE_NAME-ingress"
 
         # 环境变量替换并部署
         envsubst < $K8S_CONFIG > final-config.yaml
         kubectl apply -f final-config.yaml -n $NAMESPACE
 
         echo "✅ 部署完成"
+        echo "📋 部署详情:"
+        echo "  - Deployment: $DEPLOYMENT_NAME"
+        echo "  - Service: $SERVICE_NAME"
+        echo "  - ConfigMap: $CONFIGMAP_NAME"
+        echo "  - Secret: $SECRET_NAME"
 
     - name: 🔍 验证部署
       run: |
         echo "🔍 验证部署状态..."
 
         # 等待部署完成
-        kubectl rollout status deployment/backend-first-app -n $NAMESPACE --timeout=60s
+        kubectl rollout status deployment/$FULL_SERVICE_NAME -n $NAMESPACE --timeout=60s
 
         # 检查Pod状态
-        POD_STATUS=$(kubectl get pods -n $NAMESPACE -l app=backend-first-app -o jsonpath='{.items[0].status.phase}')
+        POD_STATUS=$(kubectl get pods -n $NAMESPACE -l app=$FULL_SERVICE_NAME -o jsonpath='{.items[0].status.phase}')
         echo "📈 Pod状态: $POD_STATUS"
 
         if [[ "$POD_STATUS" == "Running" ]]; then
           echo "✅ 部署成功"
 
           # 获取Pod信息
-          POD_NAME=$(kubectl get pods -n $NAMESPACE -l app=backend-first-app -o jsonpath='{.items[0].metadata.name}')
-          POD_IP=$(kubectl get pods -n $NAMESPACE -l app=backend-first-app -o jsonpath='{.items[0].status.podIP}')
+          POD_NAME=$(kubectl get pods -n $NAMESPACE -l app=$FULL_SERVICE_NAME -o jsonpath='{.items[0].metadata.name}')
+          POD_IP=$(kubectl get pods -n $NAMESPACE -l app=$FULL_SERVICE_NAME -o jsonpath='{.items[0].status.podIP}')
 
           echo "📛 Pod名称: $POD_NAME"
           echo "🌐 Pod IP: $POD_IP"
+          echo "🔗 Service URL: $FULL_SERVICE_NAME.$NAMESPACE.svc.cluster.local"
         else
           echo "❌ 部署失败"
-          kubectl describe pods -n $NAMESPACE -l app=backend-first-app
+          kubectl describe pods -n $NAMESPACE -l app=$FULL_SERVICE_NAME
           exit 1
         fi
 
     - name: 📋 部署摘要
       run: |
         echo "📋 ===== 部署摘要 ====="
-        echo "🎯 服务: backend-first-app"
-        echo "📍 环境: ${GITHUB_REF#refs/heads/}"
+        echo "🎯 服务全名: $FULL_SERVICE_NAME"
+        echo "🔧 服务类型: $SERVICE_TYPE"
+        echo "🔗 服务名称: $SERVICE_NAME"
+        echo "📍 环境: $ENVIRONMENT"
         echo "📦 命名空间: $NAMESPACE"
         echo "🏷️  镜像标签: $IMAGE_TAG"
+        echo "🔗 Service URL: $FULL_SERVICE_NAME.$NAMESPACE.svc.cluster.local"
         echo "⏰ 完成时间: $(date)"
         echo "========================="

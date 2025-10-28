@@ -7,52 +7,56 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: backend-first-app-config
+  name: ${CONFIGMAP_NAME}
   namespace: ${NAMESPACE}
   labels:
-    app: backend-first-app
+    app: ${FULL_SERVICE_NAME}
     environment: ${ENVIRONMENT}
+    service-type: ${SERVICE_TYPE}
 data:
-  PORT: "${PORT}"
-  LOG_LEVEL: "${LOG_LEVEL}"
+  PORT: "18080"
+  LOG_LEVEL: "${LOG_LEVEL:-info}"
   ENVIRONMENT: "${ENVIRONMENT}"
-  SERVICE_NAME: "backend-first-app"
+  SERVICE_NAME: "${FULL_SERVICE_NAME}"
+  SERVICE_TYPE: "${SERVICE_TYPE}"
 
 ---
 # Secret - 敏感数据 (生产环境需要加密)
 apiVersion: v1
 kind: Secret
 metadata:
-  name: backend-first-app-secret
+  name: ${SECRET_NAME}
   namespace: ${NAMESPACE}
   labels:
-    app: backend-first-app
+    app: ${FULL_SERVICE_NAME}
     environment: ${ENVIRONMENT}
+    service-type: ${SERVICE_TYPE}
 type: Opaque
 data:
   # 示例：base64编码的数据库密码 (请替换为实际值)
   # echo -n "your-password" | base64
-  DB_PASSWORD: "${DB_PASSWORD}"
-  API_KEY: "${API_KEY}"
-  SESSION_SECRET: "${SESSION_SECRET}"
+  DB_PASSWORD: "${DB_PASSWORD:-}"
+  API_KEY: "${API_KEY:-}"
+  SESSION_SECRET: "${SESSION_SECRET:-}"
 
 ---
 # Deployment - 应用部署配置
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: backend-first-app
+  name: ${DEPLOYMENT_NAME}
   namespace: ${NAMESPACE}
   labels:
-    app: backend-first-app
+    app: ${FULL_SERVICE_NAME}
     environment: ${ENVIRONMENT}
+    service-type: ${SERVICE_TYPE}
     version: "${IMAGE_TAG}"
 spec:
-  replicas: ${REPLICAS}
+  replicas: ${REPLICAS:-1}
   revisionHistoryLimit: 10
   selector:
     matchLabels:
-      app: backend-first-app
+      app: ${FULL_SERVICE_NAME}
       environment: ${ENVIRONMENT}
   strategy:
     type: RollingUpdate
@@ -62,12 +66,13 @@ spec:
   template:
     metadata:
       labels:
-        app: backend-first-app
+        app: ${FULL_SERVICE_NAME}
         environment: ${ENVIRONMENT}
+        service-type: ${SERVICE_TYPE}
         version: "${IMAGE_TAG}"
     spec:
       containers:
-      - name: backend-first-app
+      - name: ${FULL_SERVICE_NAME}
         image: first-app:849f60a
         imagePullPolicy: Never
         ports:
@@ -78,37 +83,37 @@ spec:
         - name: PORT
           valueFrom:
             configMapKeyRef:
-              name: backend-first-app-config
+              name: ${CONFIGMAP_NAME}
               key: PORT
         - name: LOG_LEVEL
           valueFrom:
             configMapKeyRef:
-              name: backend-first-app-config
+              name: ${CONFIGMAP_NAME}
               key: LOG_LEVEL
         - name: ENVIRONMENT
           valueFrom:
             configMapKeyRef:
-              name: backend-first-app-config
+              name: ${CONFIGMAP_NAME}
               key: ENVIRONMENT
         - name: SERVICE_NAME
           valueFrom:
             configMapKeyRef:
-              name: backend-first-app-config
+              name: ${CONFIGMAP_NAME}
               key: SERVICE_NAME
         - name: DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: backend-first-app-secret
+              name: ${SECRET_NAME}
               key: DB_PASSWORD
         - name: API_KEY
           valueFrom:
             secretKeyRef:
-              name: backend-first-app-secret
+              name: ${SECRET_NAME}
               key: API_KEY
         - name: SESSION_SECRET
           valueFrom:
             secretKeyRef:
-              name: backend-first-app-secret
+              name: ${SECRET_NAME}
               key: SESSION_SECRET
         resources:
           requests:
@@ -140,14 +145,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: backend-first-app-service
+  name: ${FULL_SERVICE_NAME}-service
   namespace: ${NAMESPACE}
   labels:
-    app: backend-first-app
+    app: ${FULL_SERVICE_NAME}
     environment: ${ENVIRONMENT}
+    service-type: ${SERVICE_TYPE}
 spec:
   selector:
-    app: backend-first-app
+    app: ${FULL_SERVICE_NAME}
     environment: ${ENVIRONMENT}
   ports:
   - name: http
@@ -161,34 +167,35 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: backend-first-app-ingress
+  name: ${FULL_SERVICE_NAME}-ingress
   namespace: ${NAMESPACE}
   labels:
-    app: backend-first-app
+    app: ${FULL_SERVICE_NAME}
     environment: ${ENVIRONMENT}
+    service-type: ${SERVICE_TYPE}
 spec:
   entryPoints:
     - web
   routes:
-  - match: PathPrefix(`/backend-first-app`)
+  - match: PathPrefix(`/${FULL_SERVICE_NAME}`)
     kind: Rule
     services:
-    - name: backend-first-app-service
+    - name: ${FULL_SERVICE_NAME}-service
       port: 80
     middlewares:
-    - name: backend-first-app-stripprefix
+    - name: ${FULL_SERVICE_NAME}-stripprefix
 
 ---
-# Middleware - StripPrefix for backend-first-app
+# Middleware - StripPrefix for ${FULL_SERVICE_NAME}
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: backend-first-app-stripprefix
+  name: ${FULL_SERVICE_NAME}-stripprefix
   namespace: ${NAMESPACE}
 spec:
   stripPrefix:
     prefixes:
-      - /backend-first-app
+      - /${FULL_SERVICE_NAME}
     forceSlash: false
 
 ---
@@ -196,15 +203,16 @@ spec:
 # apiVersion: monitoring.coreos.com/v1
 # kind: ServiceMonitor
 # metadata:
-#   name: backend-first-app-monitor
+#   name: ${FULL_SERVICE_NAME}-monitor
 #   namespace: ${NAMESPACE}
 #   labels:
-#     app: backend-first-app
+#     app: ${FULL_SERVICE_NAME}
 #     environment: ${ENVIRONMENT}
+#     service-type: ${SERVICE_TYPE}
 # spec:
 #   selector:
 #     matchLabels:
-#       app: backend-first-app
+#       app: ${FULL_SERVICE_NAME}
 #       environment: ${ENVIRONMENT}
 #   endpoints:
 #   - port: http
