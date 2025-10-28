@@ -376,16 +376,46 @@ jobs:
           echo "命名空间: $NAMESPACE"
           echo "镜像标签: $IMAGE_TAG"
 
-          # 直接设置KUBECONFIG环境变量（兼容多种环境）
+          # 配置KUBECONFIG环境变量 - 优先使用in-cluster配置
           echo "🔧 配置KUBECONFIG环境变量..."
 
+          # 优先级1: 使用GitHub Actions Secrets中的KUBE_CONFIG_DATA
           if [[ -n "$KUBE_CONFIG_DATA" ]]; then
-            echo "🔧 使用外部KUBECONFIG..."
+            echo "🔧 使用GitHub Actions Secrets中的KUBECONFIG..."
             mkdir -p ~/.kube
-            echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
+            echo "$KUBECONFIG_DATA" | base64 -d > ~/.kube/config
             export KUBECONFIG="$HOME/.kube/config"
-            echo "✅ 外部KUBECONFIG设置完成: $KUBECONFIG"
+            echo "✅ GitHub Actions Secrets KUBECONFIG设置完成"
+          # 优先级2: 使用in-cluster配置（推荐方案）
+          elif [[ -f "/run/secrets/kubernetes.io/serviceaccount/ca.crt" ]] && [[ -f "/run/secrets/kubernetes.io/serviceaccount/token" ]]; then
+            echo "🔧 使用in-cluster配置（推荐方案）..."
+            # 创建in-cluster kubeconfig
+            mkdir -p ~/.kube
+            cat > ~/.kube/config << 'EOF'
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority: /run/secrets/kubernetes.io/serviceaccount/ca.crt
+    server: https://kubernetes.default.svc
+  name: in-cluster
+contexts:
+- context:
+    cluster: in-cluster
+    user: in-cluster-user
+  name: in-cluster
+current-context: in-cluster
+kind: Config
+preferences: {}
+users:
+- name: in-cluster-user
+  user:
+    tokenFile: /run/secrets/kubernetes.io/serviceaccount/token
+EOF
+            export KUBECONFIG="$HOME/.kube/config"
+            echo "✅ in-cluster KUBECONFIG设置完成"
+          # 优先级3: 使用本地kubeconfig文件
           else
+            echo "🔧 尝试使用本地kubeconfig文件..."
             # 尝试多种方式设置KUBECONFIG
             CURRENT_USER=$(whoami)
             echo "🔍 当前用户: $CURRENT_USER"
@@ -402,30 +432,15 @@ jobs:
             elif [[ -f "/root/.kube/config" ]]; then
               export KUBECONFIG="/root/.kube/config"
               echo "✅ 方法3成功: 设置KUBECONFIG=$KUBECONFIG"
-            # 方法4: 加载profile再检查
             else
-              echo "🔧 尝试加载profile..."
-              if [[ -f "/etc/profile" ]]; then
-                # 使用bash -l来加载login profile
-                bash -l -c 'source /etc/profile && echo $KUBECONFIG' > /tmp/kubeconfig_path 2>/dev/null
-                if [[ -f "/tmp/kubeconfig_path" ]] && [[ -s "/tmp/kubeconfig_path" ]]; then
-                  export KUBECONFIG=$(cat /tmp/kubeconfig_path)
-                  echo "✅ 方法4成功: 通过profile加载KUBECONFIG=$KUBECONFIG"
-                else
-                  echo "❌ 所有方法都失败了"
-                  echo "🔍 调试信息:"
-                  echo "  HOME: $HOME"
-                  echo "  当前用户: $(whoami)"
-                  echo "  检查文件存在性:"
-                  ls -la /home/zeng/.kube/config 2>/dev/null || echo "    /home/zeng/.kube/config 不存在"
-                  ls -la $HOME/.kube/config 2>/dev/null || echo "    $HOME/.kube/config 不存在"
-                  ls -la /root/.kube/config 2>/dev/null || echo "    /root/.kube/config 不存在"
-                  exit 1
-                fi
-              else
-                echo "❌ /etc/profile文件不存在"
-                exit 1
-              fi
+              echo "❌ 所有kubeconfig方法都失败了"
+              echo "🔍 调试信息:"
+              echo "  HOME: $HOME"
+              echo "  当前用户: $(whoami)"
+              echo "  in-cluster配置检查:"
+              echo "    ca.crt: $([ -f "/run/secrets/kubernetes.io/serviceaccount/ca.crt" ] && echo '存在' || echo '不存在')"
+              echo "    token: $([ -f "/run/secrets/kubernetes.io/serviceaccount/token" ] && echo '存在' || echo '不存在')"
+              exit 1
             fi
           fi
 
@@ -437,8 +452,14 @@ jobs:
             echo "✅ kubeconfig文件存在，大小: $(wc -c < "$KUBECONFIG") bytes"
 
             # 验证服务器地址和上下文
-            SERVER_URL=$(grep "server:" "$KUBECONFIG" | awk '{print $2}')
-            CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null || echo "未知")
+            if command -v kubectl &> /dev/null; then
+              SERVER_URL=$(kubectl config view --minify=true | grep -o 'server:[^[:space:]]*' | cut -d':' -f2-)
+              CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null || echo "in-cluster")
+            else
+              # 手动解析kubeconfig文件
+              SERVER_URL=$(grep "server:" "$KUBECONFIG" | awk '{print $2}')
+              CURRENT_CONTEXT="in-cluster"
+            fi
 
             echo "🌐 服务器地址: $SERVER_URL"
             echo "🎯 当前上下文: $CURRENT_CONTEXT"
